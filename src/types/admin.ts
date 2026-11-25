@@ -1,0 +1,239 @@
+export interface Portfolio {
+  id: string;
+  title: string;
+  slug: string;
+  image_url: string;
+  client: string;
+  project_date: string | null;
+  category: string;
+  description: string;
+  overview: string;
+  seo_title: string;
+  seo_description: string;
+  created_at: string;
+  updated_at: string;
+  content_id?: PortfolioLocaleContent;
+  content_en?: PortfolioLocaleContent;
+}
+
+export interface PortfolioLocaleContent { title: string; client: string; category: string; description: string; overview: string; seo_title: string; seo_description: string; }
+
+export type PortfolioInput = Pick<Portfolio, 'title' | 'slug' | 'image_url' | 'client' | 'category' | 'description' | 'overview' | 'seo_title' | 'seo_description'> & { project_date: string };
+
+export interface PortfolioSlugAlias {
+  old_slug: string;
+  portfolio_id: string;
+}
+
+export interface NewsRecord {
+  id: string;
+  slug: string;
+  title: string;
+  cover_image: string;
+  content: string;
+  author: string;
+  category: string;
+  excerpt: string;
+  seo_title?: string;
+  seo_description?: string;
+  cover_alt?: string;
+  target_keyword?: string;
+  published_at: string | null;
+  created_at: string;
+  updated_at: string;
+  content_id?: NewsLocaleContent;
+  content_en?: NewsLocaleContent;
+}
+
+export interface NewsLocaleContent { title: string; content: string; author: string; category: string; excerpt: string; seo_title: string; seo_description: string; cover_alt: string; target_keyword: string; }
+
+export type NewsInput = Pick<NewsRecord, 'title' | 'slug' | 'cover_image' | 'content' | 'author' | 'category' | 'excerpt' | 'seo_title' | 'seo_description' | 'cover_alt' | 'target_keyword' | 'published_at'>;
+
+export interface Product {
+  id: string;
+  name: string;
+  image_url: string;
+  category: string;
+  description: string;
+  label: string;
+  color: string;
+  accent: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+  content_id?: ProductLocaleContent;
+  content_en?: ProductLocaleContent;
+}
+
+export interface ProductLocaleContent { name: string; category: string; description: string; label: string; }
+
+export type ProductInput = Pick<Product, 'name' | 'image_url' | 'category' | 'description' | 'label' | 'color' | 'accent' | 'sort_order'>;
+
+export interface HomepageStat { value: string; label: string; }
+export interface HomepageServiceCard { title: string; description: string; tags: string[]; action: string; }
+export interface HomepageHeroCopy { title: string; subtitle: string; ctaLabel: string; }
+export interface HomepageHeroSlide { image_url: string; alt?: string; content_en?: HomepageHeroCopy; content_id?: HomepageHeroCopy; }
+export interface HomepageLocaleContent {
+  hero: { title: string; subtitle: string; ctaLabel: string };
+  stats: HomepageStat[];
+  services: { sectionLabel: string; heading: string; linkLabel: string; cards: HomepageServiceCard[] };
+  about: { sectionLabel: string; heading: string; subtitle: string; features: string[]; buttonLabel: string };
+  cta: { title: string; subtitle: string; callNow: string; emailUs: string; phoneInfo: string; emailInfo: string; locationInfo: string };
+}
+
+export interface HomepageContent {
+  id: number;
+  hero_slides: HomepageHeroSlide[];
+  about_image_url: string;
+  content_id: HomepageLocaleContent;
+  content_en: HomepageLocaleContent;
+  featured_portfolio_ids: string[];
+  updated_at: string;
+}
+
+export interface AboutValueItem { title: string; description: string; }
+export interface AboutProcessItem { title: string; description: string; }
+export interface AboutIntroContent { sectionLabel?: string; headingPrefix?: string; headingAccent?: string; subtitle?: string; features: string[]; contactButton?: string; }
+export interface AboutLocaleContent { intro?: AboutIntroContent; eyebrow: string; title: string; vision_title: string; mission_title: string; vision: string; mission: string; items: AboutValueItem[]; process: AboutProcessItem[]; }
+export interface AboutContent {
+  id: number;
+  content_id: AboutLocaleContent;
+  content_en: AboutLocaleContent;
+  updated_at: string;
+}
+
+export type AboutContentInput = Omit<AboutContent, 'id' | 'updated_at'>;
+
+export type HomepageContentInput = Omit<HomepageContent, 'id' | 'updated_at'>;
+
+export interface ProductCatalogue {
+  id: number;
+  title: string;
+  file_url: string;
+  updated_at: string;
+  title_id?: string;
+  title_en?: string;
+}
+
+export interface ServiceCard {
+  title: string;
+  description: string;
+  tags: string[];
+  action: string;
+}
+
+export interface ServiceContent {
+  id: number;
+  eyebrow: string;
+  heading: string;
+  heading_accent: string;
+  cards: ServiceCard[];
+  showreel_eyebrow: string;
+  showreel_heading: string;
+  showreel_accent: string;
+  showreel_description: string;
+  primary_button_text: string;
+  primary_button_url: string;
+  secondary_button_text: string;
+  secondary_button_url: string;
+  video_webm_url: string;
+  video_mp4_url: string;
+  video_poster_url: string;
+  updated_at: string;
+  process_eyebrow?: string;
+  process_title?: string;
+  process?: AboutProcessItem[];
+  content_id?: ServiceContentLocale;
+  content_en?: ServiceContentLocale;
+}
+
+export interface ServiceContentLocale { eyebrow: string; heading: string; heading_accent: string; cards: ServiceCard[]; showreel_eyebrow: string; showreel_heading: string; showreel_accent: string; showreel_description: string; primary_button_text: string; secondary_button_text: string; process_eyebrow: string; process_title: string; process: AboutProcessItem[]; }
+
+export type ServiceContentInput = Omit<ServiceContent, 'id' | 'updated_at'>;
+
+export type ServiceLandingSlug = 'led-indoor' | 'videotron-outdoor' | 'rental-led' | 'media-konvensional' | 'digital-signage' | 'event-production';
+
+export interface ServiceLandingLocaleContent {
+  eyebrow: string;
+  title: string;
+  description: string;
+  intro_eyebrow: string;
+  intro_title: string;
+  intro: string;
+  considerations_title: string;
+  considerations: string[];
+  process_eyebrow: string;
+  process_title: string;
+  process: string[];
+  portfolio_eyebrow: string;
+  portfolio_title: string;
+  portfolio_link_text: string;
+  cta_title: string;
+  cta_description: string;
+  cta_button_text: string;
+  back_text: string;
+}
+
+export interface ServiceLandingContent {
+  slug: ServiceLandingSlug;
+  hero_image_url: string;
+  content_id: ServiceLandingLocaleContent;
+  content_en: ServiceLandingLocaleContent;
+  seo_title_id: string;
+  seo_description_id: string;
+  seo_title_en: string;
+  seo_description_en: string;
+  related_portfolio_ids: string[];
+  updated_at: string;
+}
+
+export type ServiceLandingInput = Omit<ServiceLandingContent, 'updated_at'>;
+
+export type LeadStatus = 'new' | 'contacted' | 'completed' | 'spam';
+
+export interface ContactSettings {
+  id: number;
+  marketing_phone: string;
+  marketing_email: string;
+  procurement_phone: string;
+  procurement_email: string;
+  updated_at: string;
+}
+
+export type ContactSettingsInput = Omit<ContactSettings, 'id' | 'updated_at'>;
+
+export interface ContactLead {
+  id: number;
+  name: string;
+  email: string;
+  phone: string | null;
+  message: string;
+  status: LeadStatus;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+  read_at: string | null;
+}
+
+export type CareerJobStatus = 'draft' | 'published' | 'closed';
+export type CareerSubmissionType = 'partnership' | 'job_application';
+export type CareerSubmissionStatus = 'new' | 'contacted' | 'completed' | 'spam';
+export interface CareerJobLocale { title: string; department: string; location: string; employment_type: string; description: string; qualifications: string[]; responsibilities: string[]; }
+export interface CareerJob {
+  id: string; title: string; department: string; location: string; employment_type: string;
+  description: string; qualifications: string[]; responsibilities: string[]; deadline: string | null;
+  status: CareerJobStatus; sort_order: number; content_id?: CareerJobLocale; content_en?: CareerJobLocale;
+  created_at: string; updated_at: string;
+}
+export type CareerJobInput = Omit<CareerJob, 'id' | 'created_at' | 'updated_at' | 'content_id' | 'content_en' | 'title' | 'department' | 'location' | 'employment_type' | 'description' | 'qualifications' | 'responsibilities'> & { title: string; department: string; location: string; employment_type: string; description: string; qualifications: string[]; responsibilities: string[]; content_id: CareerJobLocale; content_en: CareerJobLocale; };
+export interface CareerSubmission { id: number; name: string; email: string; phone: string | null; submission_type: CareerSubmissionType; job_id: string | null; message: string; status: CareerSubmissionStatus; notes: string; created_at: string; updated_at: string; read_at: string | null; job?: Pick<CareerJob, 'title'> | null; }
+export interface AdminNotificationCounts { contacts: number; partnerships: number; applications: number; }
+export interface CareersPageLocaleContent {
+  eyebrow: string; title: string; intro: string; partner_title: string; partner_text: string; partner_button: string;
+  jobs_eyebrow: string; jobs_title: string; jobs_empty: string; open_positions_suffix: string; apply_button: string; apply_by: string;
+  form_eyebrow: string; form_title: string; name_label: string; email_label: string; phone_label: string; type_label: string;
+  partnership_option: string; application_option: string; job_label: string; job_placeholder: string; message_label: string;
+  message_placeholder: string; submit_button: string; success_message: string; error_message: string; privacy_text: string; cv_note: string;
+}
+export interface CareersPageContent { id: number; careers_email: string; content_id: CareersPageLocaleContent; content_en: CareersPageLocaleContent; updated_at: string; }
+export type CareersPageContentInput = Omit<CareersPageContent, 'id' | 'updated_at'>;

@@ -1,0 +1,37 @@
+name: Build Qwords artifact (no deployment)
+on:
+  workflow_dispatch:
+    inputs:
+      site_url:
+        description: 'HTTPS staging origin (no path)'
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  artifact:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VITE_SITE_URL: ${{ inputs.site_url }}
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      QWORDS_STAGING: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: sudo apt-get update && sudo apt-get install -y php-cli php-curl php-xml php-mbstring
+      - run: npm run lint && npm run typecheck && npm test && npm run test:qwords
+      - run: npm run build:qwords && npm run package:qwords
+      - run: cd artifacts && zip -r qwords-staging.zip qwords
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qwords-staging
+          path: artifacts/qwords-staging.zip
+          include-hidden-files: true
+          retention-days: 7

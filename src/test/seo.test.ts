@@ -1,0 +1,18 @@
+import { describe, expect, it } from 'vitest';
+import { absoluteUrl, canonicalPublicPath, getStaticSeo, normalizePublicPath } from '@/lib/seo';
+
+describe('page SEO configuration', () => {
+  it.each(['/about', '/services', '/services/led-indoor', '/services/videotron-outdoor', '/services/rental-led', '/services/media-konvensional', '/services/digital-signage', '/services/event-production', '/product', '/portfolio', '/video', '/contact', '/news', '/faq', '/privacy'])('has unique Indonesian metadata for %s', (path) => {
+    const page = getStaticSeo(path, 'id');
+    const home = getStaticSeo('/', 'id');
+    expect(page.title).not.toBe(home.title);
+    expect(page.description.length).toBeGreaterThan(40);
+  });
+
+  it('builds canonical URLs without duplicate slashes', () => {
+    expect(absoluteUrl('/faq')).toMatch(/^https:\/\/[^/]+\/faq$/);
+    expect(normalizePublicPath('/faq/')).toBe('/faq');
+    expect(canonicalPublicPath('/faq/')).toBe('/faq/');
+    expect(canonicalPublicPath('/')).toBe('/');
+  });
+});

@@ -1,0 +1,44 @@
+import type { AboutContent, HomepageContent, NewsRecord, Portfolio, Product, ProductCatalogue, ServiceContent, ServiceLandingContent } from '@/types/admin';
+import { normalizePublicPath } from '@/lib/seo';
+
+export interface PrerenderData {
+  route: string;
+  news?: NewsRecord[];
+  article?: NewsRecord | null;
+  portfolios?: Portfolio[];
+  portfolio?: Portfolio | null;
+  products?: Product[];
+  catalogue?: ProductCatalogue | null;
+  homepage?: HomepageContent | null;
+  about?: AboutContent | null;
+  serviceContent?: ServiceContent | null;
+  serviceLanding?: ServiceLandingContent | null;
+}
+
+declare global {
+  interface Window {
+    __VISITIGA_PRERENDER_DATA__?: PrerenderData;
+    __VISITIGA_PRERENDER_MODE__?: boolean;
+    __VISITIGA_SITE_URL__?: string;
+  }
+}
+
+export function getPrerenderData(): PrerenderData | undefined {
+  if (typeof window === 'undefined') return undefined;
+  // Bootstrap data is only valid during the initial prerendered render. Once
+  // the client app is ready, never reuse that snapshot on a later navigation.
+  if (!isPrerenderedDocument() && window.__VISITIGA_PRERENDER_MODE__ !== true) return undefined;
+  if (!window.__VISITIGA_PRERENDER_DATA__) {
+    const element = document.getElementById('visitiga-prerender-data');
+    if (element?.textContent) {
+      try { window.__VISITIGA_PRERENDER_DATA__ = JSON.parse(element.textContent) as PrerenderData; }
+      catch { /* Invalid bootstrap data falls back to the live API. */ }
+    }
+  }
+  const data = window.__VISITIGA_PRERENDER_DATA__;
+  return data && normalizePublicPath(data.route) === normalizePublicPath(window.location.pathname) ? data : undefined;
+}
+
+export function isPrerenderedDocument(): boolean {
+  return typeof document !== 'undefined' && document.documentElement.dataset.prerendered === 'true';
+}

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/visitiga-media-logo.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // The public homepage is served at /id/ and /en/ (the CI Lighthouse
+      // URLs use /id/), while / is also kept as a supported redirect entry.
+      if (/^\/(?:id|en)\/?$/.test(location.pathname) || location.pathname === '/') {
+        const preload = document.createElement('link');
+        preload.rel = 'preload';
+        preload.as = 'image';
+        preload.href = '/hero-960.webp';
+        preload.imageSrcset = '/hero-640.webp 640w, /hero-960.webp 960w, /hero-1600.webp 1600w';
+        preload.imageSizes = '100vw';
+        preload.fetchPriority = 'high';
+        document.head.appendChild(preload);
+      }
+    </script>
+    <link rel="canonical" href="/id/" />
+    <link rel="alternate" hreflang="id" href="/id/" />
+    <link rel="alternate" hreflang="en" href="/en/" />
+    <link rel="alternate" hreflang="x-default" href="/id/" />
+    <meta name="robots" content="index, follow" />
+    <title>Visitiga — Solusi LED Premium</title>
+    <meta name="description" content="Solusi LED display profesional untuk bisnis Anda di seluruh Indonesia." />
+    <meta property="og:title" content="Visitiga — Solusi LED Premium" />
+    <meta property="og:description" content="Solusi LED display profesional untuk bisnis Anda di seluruh Indonesia." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="/id/" />
+    <meta property="og:image" content="/social-preview.png" />
+    <meta property="og:image:alt" content="Visitiga — Solusi LED Premium" />
+    <meta property="og:image:width" content="1920" />
+    <meta property="og:image:height" content="1920" />
+    <meta property="og:site_name" content="Visitiga Media" />
+    <meta property="og:locale" content="id_ID" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Visitiga — Solusi LED Premium" />
+    <meta name="twitter:description" content="Solusi LED display profesional untuk bisnis Anda di seluruh Indonesia." />
+    <meta name="twitter:image" content="/social-preview.png" />
+    <meta name="twitter:image:alt" content="Visitiga — Solusi LED Premium" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
