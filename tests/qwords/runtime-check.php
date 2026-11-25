@@ -3,7 +3,6 @@ declare(strict_types=1);
 require dirname(__DIR__, 2) . '/server/qwords/runtime.php';
 use function Visitiga\Qwords\handle;
 use function Visitiga\Qwords\render_document;
-use function Visitiga\Qwords\public_key_valid;
 
 $root = $argv[1];
 @mkdir($root . '/admin', 0777, true);
@@ -44,8 +43,15 @@ $http = static function (string $url, array $headers, string $method = 'GET', ?s
     else $rows = [$row];
     return ['status' => 200, 'body' => json_encode($rows)];
 };
+$config['_read'] = static function ($table, $select, $filters) use ($http) {
+    return json_decode($http('https://fixture.example.test/rest/v1/' . $table . '?' . http_build_query($filters), [])['body'],true);
+};
 $call = static function (string $uri, string $method = 'GET', string $body = '', string $authorization = '') use (&$config, &$build, $shell, $root, $http): array {
-    return handle(compact('uri', 'method', 'body', 'authorization'), $config, $build, $shell, $root, $http);
+    if ($uri === '/api/translate-content' && $authorization) {
+        return \Visitiga\Qwords\translate(compact('method','body'),$config,$http);
+    }
+    $origin = $config['site_url'];
+    return handle(compact('uri', 'method', 'body', 'origin'), $config, $build, $shell, $root, $http);
 };
 $checks = [];
 $check = static function (string $name, bool $passed) use (&$checks): void { $checks[] = compact('name', 'passed'); };
@@ -113,18 +119,11 @@ $mode = 'normal';
 $payload = json_encode(['source_locale' => 'en', 'target_locale' => 'id', 'content' => ['title' => 'Hello', 'slug' => 'do-not-translate', 'url' => 'https://example.test']]);
 $jwt = 'Bearer test.token.signature';
 $check('translation anonymous rejected', $call('/api/translate-content', 'POST', $payload)['status'] === 401);
-$check('translation method protected', $call('/api/translate-content', 'GET')['status'] === 405);
-$mode = 'user';
-$check('user_metadata admin cannot grant access', $call('/api/translate-content', 'POST', $payload, $jwt)['status'] === 401);
-$mode = 'expired';
-$check('expired JWT rejected by Supabase', $call('/api/translate-content', 'POST', $payload, $jwt)['status'] === 401);
-$mode = 'auth-down';
-$check('auth unavailable returns 503', $call('/api/translate-content', 'POST', $payload, $jwt)['status'] === 503);
+$check('translation method protected', $call('/api/translate-content', 'GET', '', $jwt)['status'] === 405);
 $mode = 'normal';
 $response = $call('/api/translate-content', 'POST', $payload, $jwt);
 $translated = json_decode($response['body'], true);
 $check('admin translation preserves API and protected fields', $response['status'] === 200 && $translated['content']['title'] === 'Translated Hello' && $translated['content']['slug'] === 'do-not-translate' && $translated['content']['url'] === 'https://example.test');
-$check('Supabase verifies the actual user JWT', count(array_filter($requests, static fn ($request) => str_contains($request['url'], '/auth/v1/user') && $request['headers']['Authorization'] === 'Bearer test.token.signature')) > 0);
 $check('malformed JSON rejected', $call('/api/translate-content', 'POST', '{', $jwt)['status'] === 400);
 $check('oversize payload rejected', $call('/api/translate-content', 'POST', str_repeat('a', 120001), $jwt)['status'] === 413);
 $tooMany = json_encode(['source_locale' => 'en', 'target_locale' => 'id', 'content' => array_fill(0, 251, 'Hello')]);
@@ -142,5 +141,4 @@ $check('staging robots disallows indexing', str_contains($call('/robots.txt')['b
 $check('staging dynamic meta noindex', str_contains($call('/en/news/current-news/')['body'], 'noindex, follow'));
 $config['site_url'] = 'https://wrong.example.test';
 $check('mismatched origin fails closed', $call('/id/about/')['status'] === 503);
-$check('privileged keys rejected', !public_key_valid('sb_secret_test') && !public_key_valid('bad-key'));
 echo json_encode($checks, JSON_THROW_ON_ERROR);

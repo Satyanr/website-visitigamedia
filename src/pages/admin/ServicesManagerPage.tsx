@@ -1,8 +1,9 @@
+import { LocalizedEditor } from '@/components/admin/LocalizedEditor';
 import { useEffect, useState } from 'react';
 import { LoaderCircle, Save, Upload } from 'lucide-react';
 import { getServiceContent, saveServiceContent } from '@/lib/adminApi';
 import { defaultServiceContent, normalizeServiceContent } from '@/lib/serviceContent';
-import { supabase } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { ServiceContentInput } from '@/types/admin';
 import { ServiceLandingManager } from '@/components/admin/ServiceLandingManager';
 
@@ -41,7 +42,7 @@ export default function ServicesManagerPage() {
         process_eyebrow: String(form.get('process_eyebrow')).trim(), process_title: String(form.get('process_title')).trim(),
         process: Array.from({ length: 5 }, (_, index) => ({ title: String(form.get(`process_${index}_title`)).trim(), description: String(form.get(`process_${index}_description`)).trim() })),
       };
-      const saved = await saveServiceContent(next); setContent(normalizeServiceContent(saved)); setMessage('Konten layanan berhasil disimpan.');
+      const saved = await saveServiceContent({ ...next, content_id: content.content_id }, form); setContent(normalizeServiceContent(saved)); setMessage('Konten layanan berhasil disimpan.');
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Konten layanan tidak dapat disimpan.'); }
     finally { setSaving(false); }
   };
@@ -57,7 +58,7 @@ export default function ServicesManagerPage() {
       <Section title="Teks showreel"><div className="grid gap-5 sm:grid-cols-2"><Field name="showreel_eyebrow" label="Label kecil" initial={content.showreel_eyebrow} /><Field name="showreel_heading" label="Judul" initial={content.showreel_heading} /><Field name="showreel_accent" label="Teks aksen" initial={content.showreel_accent} /><Area name="showreel_description" label="Deskripsi" initial={content.showreel_description} /><Field name="primary_button_text" label="Teks tombol utama" initial={content.primary_button_text} /><Field name="primary_button_url" label="URL tombol utama" initial={content.primary_button_url} /><Field name="secondary_button_text" label="Teks tombol kedua" initial={content.secondary_button_text} /><Field name="secondary_button_url" label="URL tombol kedua" initial={content.secondary_button_url} /></div></Section>
       <Section title="Media showreel"><div className="grid gap-5 lg:grid-cols-2"><VideoUpload value={content.video_mp4_url} onChange={persistUploadedVideo} /><Field name="video_poster_url" label="URL poster video" initial={content.video_poster_url} /></div>{content.video_mp4_url && <video key={content.video_mp4_url} controls preload="metadata" poster={content.video_poster_url} className="mt-5 aspect-video w-full max-w-2xl rounded-xl bg-black"><source src={content.video_mp4_url} type="video/mp4" /></video>}</Section>
       <div className="sticky bottom-4 flex justify-end"><button disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-5 py-3 text-sm font-bold text-white shadow-lg hover:bg-orange-600 disabled:opacity-50">{saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{saving ? 'Menyimpan…' : 'Simpan perubahan'}</button></div>
-    </form>
+    <LocalizedEditor value={content.content_id} /></form>
     <ServiceLandingManager />
   </div>;
 }
@@ -68,6 +69,6 @@ function Area({ name, label, initial }: { name: string; label: string; initial: 
 
 function VideoUpload({ value, onChange }: { value: string; onChange: (url: string) => Promise<void> }) {
   const [uploading, setUploading] = useState(false); const [error, setError] = useState('');
-  const upload = async (file?: File) => { if (!file) return; if (file.type !== 'video/mp4' || !file.name.toLowerCase().endsWith('.mp4')) { setError('Video harus berformat MP4.'); return; } if (file.size > 30 * 1024 * 1024) { setError('Video maksimal 30 MB.'); return; } if (!supabase) { setError('Supabase belum dikonfigurasi.'); return; } setUploading(true); setError(''); const path = `services/${crypto.randomUUID()}.mp4`; try { const { error: uploadError } = await supabase.storage.from('website-media').upload(path, file, { cacheControl: '31536000', contentType: 'video/mp4', upsert: false }); if (uploadError) throw uploadError; const url = supabase.storage.from('website-media').getPublicUrl(path).data.publicUrl; try { await onChange(url); } catch (saveError) { await supabase.storage.from('website-media').remove([path]); throw saveError; } } catch (reason) { setError(reason instanceof Error ? reason.message : 'Video gagal diunggah.'); } finally { setUploading(false); } };
+  const upload = async (file?: File) => { if (!file) return; if (file.type !== 'video/mp4' || !file.name.toLowerCase().endsWith('.mp4')) { setError('Video harus berformat MP4.'); return; } if (file.size > 30 * 1024 * 1024) { setError('Video maksimal 30 MB.'); return; } if (!api) { setError('Layanan website belum tersedia.'); return; } setUploading(true); setError(''); const path = `services/${crypto.randomUUID()}.mp4`; try { const { error: uploadError } = await api.media.upload(path, file); if (uploadError) throw uploadError; const url = api.media.getPublicUrl(path).data.publicUrl; try { await onChange(url); } catch (saveError) { await api.media.remove([path]); throw saveError; } } catch (reason) { setError(reason instanceof Error ? reason.message : 'Video gagal diunggah.'); } finally { setUploading(false); } };
   return <div><p className="text-sm font-medium text-slate-700">Video MP4</p><p className="mt-2 truncate rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-500">{value}</p><label className="mt-3 inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold hover:bg-slate-50"><input type="file" accept="video/mp4,.mp4" className="sr-only" disabled={uploading} onChange={(event) => void upload(event.target.files?.[0])} />{uploading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}{uploading ? 'Mengunggah dan menyimpan…' : 'Pilih video MP4'}</label><p className="mt-2 text-xs text-slate-500">Hanya MP4, maksimal 30 MB. Video otomatis tersimpan setelah upload selesai.</p>{error && <p className="mt-2 text-xs text-red-600">{error}</p>}</div>;
 }

@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import { readLocalStorage, writeLocalStorage } from '@/lib/safeStorage';
 
 const visitorKey = 'visitiga_visitor_id';
@@ -12,7 +12,7 @@ function visitorId() {
 }
 
 export async function recordPageView(path: string): Promise<void> {
-  if (!supabase || path.startsWith('/admin')) return;
-  const { error } = await supabase.from('website_events').insert({ visitor_id: visitorId(), path });
+  if (!api || path.startsWith('/admin')) return;
+  const { error } = await api.rpc('record_website_event', { visitor_id: visitorId(), path });
   if (error) console.warn('Page view tidak dapat direkam:', error.message);
 }

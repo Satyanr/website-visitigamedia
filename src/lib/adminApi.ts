@@ -1,11 +1,10 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabase';
-import { translateContent } from '@/lib/translation';
+import { api } from '@/lib/api';
+import { localize } from '@/lib/translation';
 import type { AboutContent, AboutContentInput, AdminNotificationCounts, CareerJob, CareerJobInput, CareersPageContent, CareersPageContentInput, CareerSubmission, CareerSubmissionStatus, ContactLead, ContactSettings, ContactSettingsInput, HomepageContent, HomepageContentInput, LeadStatus, NewsInput, NewsRecord, Portfolio, PortfolioInput, PortfolioSlugAlias, Product, ProductCatalogue, ProductInput, ServiceContent, ServiceContentInput, ServiceLandingContent, ServiceLandingInput, ServiceLandingSlug } from '@/types/admin';
 
-function client(): SupabaseClient {
-  if (!supabase) throw new Error('Supabase belum dikonfigurasi.');
-  return supabase;
+function client() {
+  if (!api) throw new Error('Layanan website belum tersedia.');
+  return api;
 }
 
 function assertSafeMediaUrl(value: string, label: string) {
@@ -42,7 +41,7 @@ function validateContactSettings(input: ContactSettingsInput) {
 export async function listPortfolios(): Promise<Portfolio[]> {
   const { data, error } = await client().from('portfolios').select('*').order('created_at', { ascending: false });
   if (error) throw error;
-  return data as Portfolio[];
+  return data as unknown as Portfolio[];
 }
 
 export async function listPublicPortfolios(): Promise<Portfolio[]> {
@@ -52,28 +51,28 @@ export async function listPublicPortfolios(): Promise<Portfolio[]> {
 export async function getPublicPortfolioBySlug(slug: string): Promise<Portfolio | null> {
   const { data, error } = await client().from('portfolios').select('*').eq('slug', slug).maybeSingle();
   if (error) throw error;
-  return data as Portfolio | null;
+  return data as unknown as Portfolio | null;
 }
 
 export async function getPublicPortfolioById(id: string): Promise<Portfolio | null> {
   const { data, error } = await client().from('portfolios').select('*').eq('id', id).maybeSingle();
   if (error) throw error;
-  return data as Portfolio | null;
+  return data as unknown as Portfolio | null;
 }
 
 export async function getPortfolioAlias(slug: string): Promise<PortfolioSlugAlias | null> {
   const { data, error } = await client().from('portfolio_slug_aliases').select('old_slug,portfolio_id').eq('old_slug', slug).maybeSingle();
   if (error) throw error;
-  return data as PortfolioSlugAlias | null;
+  return data as unknown as PortfolioSlugAlias | null;
 }
 
 export async function listPortfolioAliases(): Promise<PortfolioSlugAlias[]> {
   const { data, error } = await client().from('portfolio_slug_aliases').select('old_slug,portfolio_id');
   if (error) throw error;
-  return data as PortfolioSlugAlias[];
+  return data as unknown as PortfolioSlugAlias[];
 }
 
-export async function savePortfolio(input: PortfolioInput, id?: string): Promise<void> {
+export async function savePortfolio(input: PortfolioInput, id?: string, previous?: Portfolio["content_id"], form?: FormData): Promise<void> {
   assertSafeMediaUrl(input.image_url, 'URL gambar project');
   const projectDate = input.project_date.trim();
     const validProjectDate = projectDate === ''
@@ -82,7 +81,7 @@ export async function savePortfolio(input: PortfolioInput, id?: string): Promise
       || (/^\d{4}-(0[1-9]|1[0-2])-([0-2]\d|3[01])$/.test(projectDate) && !Number.isNaN(new Date(`${projectDate}T00:00:00Z`).getTime()));
   if (!validProjectDate) throw new Error('Tanggal proyek harus kosong, tahun, tahun-bulan, atau tanggal lengkap.');
   const contentEn = { title: input.title, client: input.client, category: input.category, description: input.description, overview: input.overview, seo_title: input.seo_title, seo_description: input.seo_description };
-  const contentId = await translateContent(contentEn);
+  const contentId = await localize(contentEn, previous, form);
   const payload = { ...input, project_date: projectDate || null, content_en: contentEn, content_id: contentId };
   const query = id ? client().from('portfolios').update(payload).eq('id', id) : client().from('portfolios').insert(payload);
   const { error } = await query;
@@ -95,24 +94,24 @@ export async function deletePortfolio(id: string): Promise<void> {
 }
 
 export async function listNews(): Promise<NewsRecord[]> {
-  const { data, error } = await client().from('news').select('*').order('published_at', { ascending: false, nullsFirst: false });
+  const { data, error } = await client().adminFrom('news').select('*').order('published_at', { ascending: false, nullsFirst: false });
   if (error) throw error;
-  return data as NewsRecord[];
+  return data as unknown as NewsRecord[];
 }
 
 export async function listPublicNews(): Promise<NewsRecord[]> {
   const { data, error } = await client().from('news').select('*').not('published_at', 'is', null).order('published_at', { ascending: false });
   if (error) throw error;
-  return data as NewsRecord[];
+  return data as unknown as NewsRecord[];
 }
 
 export async function getPublicNews(slug: string): Promise<NewsRecord | null> {
   const { data, error } = await client().from('news').select('*').eq('slug', slug).not('published_at', 'is', null).maybeSingle();
   if (error) throw error;
-  return data as NewsRecord | null;
+  return data as unknown as NewsRecord | null;
 }
 
-export async function saveNews(input: NewsInput, id?: string): Promise<void> {
+export async function saveNews(input: NewsInput, id?: string, previous?: NewsRecord["content_id"], form?: FormData): Promise<void> {
   assertSafeMediaUrl(input.cover_image, 'URL cover berita');
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(input.slug) || input.slug.length > 100) throw new Error('Slug hanya boleh berisi huruf kecil, angka, dan tanda hubung (maksimal 100 karakter).');
   if ((input.seo_title?.length ?? 0) > 70) throw new Error('SEO title maksimal 70 karakter.');
@@ -120,7 +119,7 @@ export async function saveNews(input: NewsInput, id?: string): Promise<void> {
   if ((input.cover_alt?.length ?? 0) > 180) throw new Error('Alt text cover maksimal 180 karakter.');
   if ((input.target_keyword?.length ?? 0) > 100) throw new Error('Target keyword maksimal 100 karakter.');
   const contentEn = { title: input.title, content: input.content, author: input.author, category: input.category, excerpt: input.excerpt, seo_title: input.seo_title ?? '', seo_description: input.seo_description ?? '', cover_alt: input.cover_alt ?? '', target_keyword: input.target_keyword ?? '' };
-  const contentId = await translateContent(contentEn);
+  const contentId = await localize(contentEn, previous, form);
   const payload = { ...input, content_en: contentEn, content_id: contentId };
   const query = id ? client().from('news').update(payload).eq('id', id) : client().from('news').insert(payload);
   const { error } = await query;
@@ -136,17 +135,17 @@ export async function deleteNews(id: string): Promise<void> {
 export async function listProducts(): Promise<Product[]> {
   const { data, error } = await client().from('products').select('*').order('sort_order').order('created_at');
   if (error) throw error;
-  return data as Product[];
+  return data as unknown as Product[];
 }
 
 export async function listPublicProducts(): Promise<Product[]> {
   return listProducts();
 }
 
-export async function saveProduct(input: ProductInput, id?: string): Promise<void> {
+export async function saveProduct(input: ProductInput, id?: string, previous?: Product["content_id"], form?: FormData): Promise<void> {
   assertSafeMediaUrl(input.image_url, 'URL gambar produk');
   const contentEn = { name: input.name, category: input.category, description: input.description, label: input.label };
-  const contentId = await translateContent(contentEn);
+  const contentId = await localize(contentEn, previous, form);
   const payload = { ...input, content_en: contentEn, content_id: contentId };
   const query = id ? client().from('products').update(payload).eq('id', id) : client().from('products').insert(payload);
   const { error } = await query;
@@ -175,7 +174,7 @@ function validateHomepageContent(input: HomepageContentInput) {
 export async function getHomepageContent(): Promise<HomepageContent | null> {
   const { data, error } = await client().from('homepage_content').select('*').eq('id', 1).maybeSingle();
   if (error) throw error;
-  return data as HomepageContent | null;
+  return data as unknown as HomepageContent | null;
 }
 
 export async function getPublicHomepageContent(): Promise<HomepageContent | null> {
@@ -186,13 +185,13 @@ export async function saveHomepageContent(input: HomepageContentInput): Promise<
   validateHomepageContent(input);
   const { data, error } = await client().from('homepage_content').upsert({ id: 1, ...input }).select('*').single();
   if (error) throw error;
-  return data as HomepageContent;
+  return data as unknown as HomepageContent;
 }
 
 export async function getContactSettings(): Promise<ContactSettings | null> {
   const { data, error } = await client().from('contact_settings').select('*').eq('id', 1).maybeSingle();
   if (error) throw error;
-  return data as ContactSettings | null;
+  return data as unknown as ContactSettings | null;
 }
 
 export async function saveContactSettings(input: ContactSettingsInput): Promise<ContactSettings> {
@@ -205,41 +204,41 @@ export async function saveContactSettings(input: ContactSettingsInput): Promise<
   validateContactSettings(normalized);
   const { data, error } = await client().from('contact_settings').upsert({ id: 1, ...normalized }).select('*').single();
   if (error) throw error;
-  return data as ContactSettings;
+  return data as unknown as ContactSettings;
 }
 
 export async function getAboutContent(): Promise<AboutContent | null> {
   const { data, error } = await client().from('about_content').select('*').eq('id', 1).maybeSingle();
   if (error) throw error;
-  return data as AboutContent | null;
+  return data as unknown as AboutContent | null;
 }
 
 export async function saveAboutContent(input: AboutContentInput): Promise<AboutContent> {
   const { data, error } = await client().from('about_content').upsert({ id: 1, ...input }).select('*').single();
   if (error) throw error;
-  return data as AboutContent;
+  return data as unknown as AboutContent;
 }
 
 export async function getProductCatalogue(): Promise<ProductCatalogue | null> {
   const { data, error } = await client().from('product_catalogue').select('*').eq('id', 1).maybeSingle();
   if (error) throw error;
-  return data as ProductCatalogue | null;
+  return data as unknown as ProductCatalogue | null;
 }
 
-export async function saveProductCatalogue(title: string, fileUrl: string): Promise<void> {
+export async function saveProductCatalogue(title: string, fileUrl: string, titleId = title): Promise<void> {
   assertSafeMediaUrl(fileUrl, 'URL katalog');
-  const translated = await translateContent({ title });
-  const { error } = await client().from('product_catalogue').upsert({ id: 1, title, title_en: title, title_id: translated.title, file_url: fileUrl });
+
+  const { error } = await client().from('product_catalogue').upsert({ id: 1, title, title_en: title, title_id: titleId, file_url: fileUrl });
   if (error) throw error;
 }
 
 export async function getServiceContent(): Promise<ServiceContent | null> {
   const { data, error } = await client().from('service_content').select('*').eq('id', 1).maybeSingle();
   if (error) throw error;
-  return data as ServiceContent | null;
+  return data as unknown as ServiceContent | null;
 }
 
-export async function saveServiceContent(input: ServiceContentInput): Promise<ServiceContent> {
+export async function saveServiceContent(input: ServiceContentInput, form?: FormData): Promise<ServiceContent> {
   if (input.cards.length !== 6) throw new Error('Layanan harus memiliki tepat enam kartu.');
   assertSafeLink(input.primary_button_url, 'URL tombol utama');
   assertSafeLink(input.secondary_button_url, 'URL tombol kedua');
@@ -253,10 +252,10 @@ export async function saveServiceContent(input: ServiceContentInput): Promise<Se
   delete databaseInput.content_id;
   delete databaseInput.content_en;
   const contentEn = { eyebrow: input.eyebrow, heading: input.heading, heading_accent: input.heading_accent, cards: input.cards, showreel_eyebrow: input.showreel_eyebrow, showreel_heading: input.showreel_heading, showreel_accent: input.showreel_accent, showreel_description: input.showreel_description, primary_button_text: input.primary_button_text, secondary_button_text: input.secondary_button_text, process_eyebrow: input.process_eyebrow ?? 'Our process', process_title: input.process_title ?? 'From needs to real solutions', process: input.process?.length === 5 ? input.process : [] };
-  const contentId = await translateContent(contentEn);
+  const contentId = await localize(contentEn, input.content_id, form);
   const { data, error } = await client().from('service_content').upsert({ id: 1, ...databaseInput, content_en: contentEn, content_id: contentId }).select('*').single();
   if (error) throw error;
-  return data as ServiceContent;
+  return data as unknown as ServiceContent;
 }
 
 type ServiceLandingRow = Omit<ServiceLandingContent, 'related_portfolio_ids'> & {
@@ -277,13 +276,13 @@ const serviceLandingSelect = '*,service_landing_portfolios(portfolio_id,position
 export async function listServiceLandings(): Promise<ServiceLandingContent[]> {
   const { data, error } = await client().from('service_landings').select(serviceLandingSelect).order('slug');
   if (error) throw error;
-  return (data as ServiceLandingRow[]).map(mapServiceLanding);
+  return (data as unknown as ServiceLandingRow[]).map(mapServiceLanding);
 }
 
 export async function getServiceLanding(slug: ServiceLandingSlug): Promise<ServiceLandingContent | null> {
   const { data, error } = await client().from('service_landings').select(serviceLandingSelect).eq('slug', slug).maybeSingle();
   if (error) throw error;
-  return data ? mapServiceLanding(data as ServiceLandingRow) : null;
+  return data ? mapServiceLanding(data as unknown as ServiceLandingRow) : null;
 }
 
 export async function saveServiceLanding(input: ServiceLandingInput): Promise<ServiceLandingContent> {
@@ -308,23 +307,23 @@ export async function saveServiceLanding(input: ServiceLandingInput): Promise<Se
 }
 
 export async function listContactLeads(): Promise<ContactLead[]> {
-  const { data, error } = await client().from('contact_messages').select('*').order('created_at', { ascending: false });
+  const { data, error } = await client().adminFrom('contact_messages').select('*').order('created_at', { ascending: false });
   if (error) throw error;
-  return data as ContactLead[];
+  return data as unknown as ContactLead[];
 }
 
 export async function updateContactLead(id: number, input: { status: LeadStatus; notes: string }): Promise<void> {
-  const { error } = await client().from('contact_messages').update(input).eq('id', id);
+  const { error } = await client().adminFrom('contact_messages').update(input).eq('id', id);
   if (error) throw error;
 }
 
 export async function deleteContactLead(id: number): Promise<void> {
-  const { error } = await client().from('contact_messages').delete().eq('id', id);
+  const { error } = await client().adminFrom('contact_messages').delete().eq('id', id);
   if (error) throw error;
 }
 
 export async function countNewContactLeads(): Promise<number> {
-  const { count, error } = await client().from('contact_messages').select('id', { count: 'exact', head: true }).eq('status', 'new');
+  const { count, error } = await client().adminFrom('contact_messages').select('id', { count: 'exact', head: true }).eq('status', 'new');
   if (error) throw error;
   return count ?? 0;
 }
@@ -332,9 +331,9 @@ export async function countNewContactLeads(): Promise<number> {
 export async function getAdminNotificationCounts(): Promise<AdminNotificationCounts> {
   const database = client();
   const [contacts, partnerships, applications] = await Promise.all([
-    database.from('contact_messages').select('id', { count: 'exact', head: true }).is('read_at', null),
-    database.from('careers_submissions').select('id', { count: 'exact', head: true }).is('read_at', null).eq('submission_type', 'partnership'),
-    database.from('careers_submissions').select('id', { count: 'exact', head: true }).is('read_at', null).eq('submission_type', 'job_application'),
+    database.adminFrom('contact_messages').select('id', { count: 'exact', head: true }).is('read_at', null),
+    database.adminFrom('careers_submissions').select('id', { count: 'exact', head: true }).is('read_at', null).eq('submission_type', 'partnership'),
+    database.adminFrom('careers_submissions').select('id', { count: 'exact', head: true }).is('read_at', null).eq('submission_type', 'job_application'),
   ]);
   const error = contacts.error ?? partnerships.error ?? applications.error;
   if (error) throw error;
@@ -345,9 +344,9 @@ export async function markContactMessagesRead(): Promise<void> { const { error }
 export async function markCareerSubmissionsRead(): Promise<void> { const { error } = await client().rpc('mark_careers_submissions_read'); if (error) throw error; }
 
 export async function listCareerJobs(): Promise<CareerJob[]> {
-  const { data, error } = await client().from('careers_jobs').select('*').order('sort_order').order('created_at', { ascending: false });
+  const { data, error } = await client().adminFrom('careers_jobs').select('*').order('sort_order').order('created_at', { ascending: false });
   if (error) throw error;
-  return data as CareerJob[];
+  return data as unknown as CareerJob[];
 }
 
 export async function saveCareerJob(input: CareerJobInput, id?: string): Promise<void> {
@@ -355,17 +354,17 @@ export async function saveCareerJob(input: CareerJobInput, id?: string): Promise
     if (!locale.title.trim() || !locale.description.trim()) throw new Error('Judul dan deskripsi lowongan wajib diisi untuk setiap bahasa.');
   }
   const payload = { ...input, title: input.content_en.title, department: input.content_en.department, location: input.content_en.location, employment_type: input.content_en.employment_type, description: input.content_en.description, qualifications: input.content_en.qualifications, responsibilities: input.content_en.responsibilities };
-  const query = id ? client().from('careers_jobs').update(payload).eq('id', id) : client().from('careers_jobs').insert(payload);
+  const query = id ? client().adminFrom('careers_jobs').update(payload).eq('id', id) : client().adminFrom('careers_jobs').insert(payload);
   const { error } = await query;
   if (error) throw error;
 }
 
-export async function deleteCareerJob(id: string): Promise<void> { const { error } = await client().from('careers_jobs').delete().eq('id', id); if (error) throw error; }
-export async function listCareerSubmissions(): Promise<CareerSubmission[]> { const { data, error } = await client().from('careers_submissions').select('*,job:careers_jobs(title)').order('created_at', { ascending: false }); if (error) throw error; return data as CareerSubmission[]; }
-export async function updateCareerSubmission(id: number, input: { status: CareerSubmissionStatus; notes: string }): Promise<void> { const { error } = await client().from('careers_submissions').update(input).eq('id', id); if (error) throw error; }
-export async function deleteCareerSubmission(id: number): Promise<void> { const { error } = await client().from('careers_submissions').delete().eq('id', id); if (error) throw error; }
+export async function deleteCareerJob(id: string): Promise<void> { const { error } = await client().adminFrom('careers_jobs').delete().eq('id', id); if (error) throw error; }
+export async function listCareerSubmissions(): Promise<CareerSubmission[]> { const { data, error } = await client().adminFrom('careers_submissions').select('*,job:careers_jobs(title)').order('created_at', { ascending: false }); if (error) throw error; return data as unknown as CareerSubmission[]; }
+export async function updateCareerSubmission(id: number, input: { status: CareerSubmissionStatus; notes: string }): Promise<void> { const { error } = await client().adminFrom('careers_submissions').update(input).eq('id', id); if (error) throw error; }
+export async function deleteCareerSubmission(id: number): Promise<void> { const { error } = await client().adminFrom('careers_submissions').delete().eq('id', id); if (error) throw error; }
 
-export async function getCareersPageContent(): Promise<CareersPageContent | null> { const { data, error } = await client().from('careers_page_content').select('*').eq('id', 1).maybeSingle(); if (error) throw error; return data as CareersPageContent | null; }
+export async function getCareersPageContent(): Promise<CareersPageContent | null> { const { data, error } = await client().from('careers_page_content').select('*').eq('id', 1).maybeSingle(); if (error) throw error; return data as unknown as CareersPageContent | null; }
 export async function saveCareersPageContent(input: CareersPageContentInput): Promise<CareersPageContent> {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.careers_email.trim())) throw new Error('Email Careers tidak valid.');
   for (const locale of [input.content_id, input.content_en]) {
@@ -373,5 +372,5 @@ export async function saveCareersPageContent(input: CareersPageContentInput): Pr
   }
   const { data, error } = await client().from('careers_page_content').upsert({ id: 1, ...input }).select('*').single();
   if (error) throw error;
-  return data as CareersPageContent;
+  return data as unknown as CareersPageContent;
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, AlertTriangle, Gauge, LoaderCircle, ShieldAlert } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { api } from '@/lib/api';
 
 type Observation = {
   id: number;
@@ -32,16 +32,16 @@ export default function ObservabilityPanel() {
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
-    if (!supabase) return;
+    if (!api) return;
     setLoading(true);
     const since = new Date(Date.now() - (period === '24h' ? 1 : 7) * 86_400_000).toISOString();
-    const { data, error: queryError } = await supabase.from('website_observations').select('id,kind,name,value,rating,path,release,details,created_at').gte('created_at', since).order('created_at', { ascending: false }).limit(1000);
+    const { data, error: queryError } = await api.adminFrom('website_observations').select('id,kind,name,value,rating,path,release,details,created_at').gte('created_at', since).order('created_at', { ascending: false }).limit(1000);
     if (queryError) setError(queryError.message); else { setRows((data ?? []) as Observation[]); setError(''); }
     setLoading(false);
   }, [period]);
 
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { if (supabase) void supabase.rpc('purge_old_website_observations'); }, []);
+  useEffect(() => { if (api) void api.rpc('purge_old_website_observations'); }, []);
 
   const summary = useMemo(() => {
     const errors = rows.filter(({ kind }) => kind === 'client_error');

@@ -83,7 +83,7 @@ function AnimatedRoutes() {
   }, [location.pathname]);
 
   useEffect(() => {
-    // Analytics must not pull the Supabase SDK into the critical render path.
+    // Load analytics after the initial render.
     const timer = window.setTimeout(() => {
       void import('@/lib/analytics').then(({ recordPageView }) => recordPageView(location.pathname));
     }, 1200);

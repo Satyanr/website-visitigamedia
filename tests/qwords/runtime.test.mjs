@@ -4,22 +4,16 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assertBuildEnvironment, assertNoSecrets, assertPublicKey, inlineScriptHashes, legacyApps, renderHtaccess } from '../../scripts/qwords-lib.mjs';
-import { publicSupabaseHeaders } from '../../scripts/supabase-headers.mjs';
+import { assertBuildEnvironment, assertNoSecrets, inlineScriptHashes, legacyApps, renderHtaccess } from '../../scripts/qwords-lib.mjs';
 
-test('public Supabase headers do not replace user JWT handling', () => {
-  assert.deepEqual(publicSupabaseHeaders('sb_publishable_test'), { apikey: 'sb_publishable_test' });
-  assert.equal(publicSupabaseHeaders('legacy-anon').Authorization, 'Bearer legacy-anon');
-});
 test('artifact scanner and build guard reject server credentials', () => {
   const privileged = `eyJhbGciOiJIUzI1NiJ9.${Buffer.from('{"role":"service_role"}').toString('base64url')}.signature`;
   for (const value of ['sb_secret_test-value', privileged]) {
     assert.throws(() => assertNoSecrets(value));
-    assert.throws(() => assertPublicKey(value));
   }
   assert.throws(() => assertNoSecrets('accidental provider value', ['provider value']));
   assert.throws(() => assertBuildEnvironment({ VITE_DEEPL_AUTH_KEY: 'test-value' }));
-  assert.doesNotThrow(() => assertPublicKey('sb_publishable_test-only'));
+  assert.throws(() => assertBuildEnvironment({ VITE_DB_PASSWORD: 'test-value' }));
 });
 test('CSP hashes emitted executable scripts and excludes data/external scripts', () => {
   const hashes = inlineScriptHashes('<script>console.log(1)</script><script type="application/ld+json">{}</script><script src="/app.js"></script>');
@@ -27,10 +21,9 @@ test('CSP hashes emitted executable scripts and excludes data/external scripts',
   assert.match(hashes[0], /^'sha256-[A-Za-z0-9+/]+=*'$/);
   assert.notDeepEqual(hashes, inlineScriptHashes('<script>console.log(2)</script>'));
   const template = readFileSync(new URL('../../server/qwords/.htaccess', import.meta.url), 'utf8');
-  const rules = renderHtaccess(template, hashes, { supabase_url: 'https://data.example.test' });
-  assert.match(rules, /img-src [^;]+https:\/\/data\.example\.test;/);
-  assert.match(rules, /connect-src [^;]+https:\/\/data\.example\.test wss:\/\/data\.example\.test;/);
-  assert.throws(() => renderHtaccess(template, hashes, { supabase_url: 'https://data.example.test; unsafe' }));
+  const rules = renderHtaccess(template, hashes, { staging: true });
+  assert.match(rules, /connect-src 'self';/);
+  assert.doesNotMatch(rules, /supabase\.co/);
 });
 const php = process.env.PHP_BINARY || 'php';
 const available = spawnSync(php, ['-v']).status === 0;

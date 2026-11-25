@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import { readLocalStorage, writeLocalStorage } from '@/lib/safeStorage';
 
 export interface NewsComment {
@@ -10,17 +10,17 @@ export interface NewsComment {
 }
 
 function client() {
-  if (!supabase) throw new Error('Layanan komentar belum tersedia.');
-  return supabase;
+  if (!api) throw new Error('Layanan komentar belum tersedia.');
+  return api;
 }
 
 export async function listNewsComments(newsId: string, cursor?: NewsComment) {
   let query = client().from('news_comments').select('id,news_id,name,body,created_at')
     .eq('news_id', newsId).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(21);
-  if (cursor) query = query.or(`created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`);
+  if (cursor) query = query.before(cursor);
   const { data, error } = await query;
   if (error) throw error;
-  return { items: data.slice(0, 20) as NewsComment[], hasMore: data.length > 20 };
+  return { items: data.slice(0, 20) as unknown as NewsComment[], hasMore: data.length > 20 };
 }
 
 let memoryKey: string | undefined;

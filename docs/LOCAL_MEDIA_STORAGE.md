@@ -1,0 +1,9 @@
+# Media lokal dan kuota
+
+Buat folder sibling `visitiga-data/sessions`, `media` dan `documents` di luar alias/document root. Atur akses bagi EUID PHP, biasanya 0700 untuk folder dan 0600 untuk file. Media dipisah dari code release agar update dan rollback file tidak menghapus upload aktif. Simpan backup registri DB serta file media sebagai satu pasangan.
+
+Upload normal menerima JPEG/PNG/WebP/GIF, PDF, MP4/WebM yang cocok dengan hasil fileinfo. Gambar diverifikasi dimensi dan tipe. Jika GD tersedia, gambar hingga 6 megapiksel dan 8 MiB juga diuji decode. ImageUploadField tetap menggunakan optimasi browser existing. Blob disimpan dengan nama fisik derivasi ID UUID dan checksum. PHP menolak path bebas dan melayani video/unduhan via stream/Range, sehingga file tidak dapat dieksekusi sebagai PHP. Dokumen sensitif memakai visibility private dan hanya diunduh melalui endpoint admin. Media dihapus hanya jika referensi konten sudah dipindahkan. Pada upload gagal, file sementara ditangani PHP atau dibersihkan oleh transaksi aplikasi.
+
+Dengan upload_max_filesize 2M dan post_max_size 8M, gunakan default `media_file_bytes=2097152`. Jika Qwords mengizinkan PDF/video sampai 30 MiB, sinkronkan PHP `upload_max_filesize=30M`, `post_max_size=32M` atau lebih agar multipart memiliki ruang, dan `media_file_bytes=31457280`. Uji request timeout di server. Batas aplikasi maksimum 30 MiB. Disk dan inode dikontrol lewat `media_quota_bytes` dan `media_max_files`. Pastikan saldo riil sebelum menyetelnya. Jangan menambah varian di hosting secara otomatis. Rekomendasi awal 1 GiB dan 2.000 media dikurangi jika saldo akun rendah.
+
+Migrasi media selalu memakai sumber tervalidasi, SHA-256 dan target lokal. Pertahankan ekstensi asli yang diizinkan. Jika objek tidak dapat dipulihkan, catat URL dan halaman yang terdampak untuk pemilik konten; jangan ganti aset dengan placeholder yang tidak relevan.

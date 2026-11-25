@@ -39,9 +39,9 @@ export async function submitObservation(input: { kind: ObservationKind; name: st
   if (sent.has(dedupeKey)) return;
   sent.add(dedupeKey);
   try {
-    const { supabase } = await import('@/lib/supabase');
-    if (!supabase) return;
-    const { error } = await supabase.rpc('submit_website_observation', {
+    const { api } = await import('@/lib/api');
+    if (!api) return;
+    const { error } = await api.rpc('submit_website_observation', {
       p_kind: input.kind, p_name: input.name.slice(0, 80), p_value: input.value ?? null,
       p_rating: input.rating ?? null, p_path: cleanPath(), p_fingerprint: input.fingerprint,
       p_release: release.slice(0, 80), p_details: input.details ?? {}, p_submission_key: observationKey(),

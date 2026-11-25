@@ -1,9 +1,8 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import type { Session } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabase';
+import { getSession, login, logout, request, type AdminSession } from '@/lib/api';
 
 interface AuthContextValue {
-  session: Session | null;
+  session: AdminSession | null;
   isLoading: boolean;
   isConfigured: boolean;
   isAdmin: boolean;
@@ -12,63 +11,43 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
-const ADMIN_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+const IDLE_MS = 30 * 60 * 1000;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSession] = useState<AdminSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-
   useEffect(() => {
-    if (!supabase) {
-      setIsLoading(false);
-      return;
-    }
-
-    void supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setIsLoading(false);
-    });
-
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => setSession(nextSession));
-    return () => listener.subscription.unsubscribe();
+    let alive = true;
+    const expired = () => setSession(null);
+    window.addEventListener('admin-session-expired', expired);
+    void getSession().then((current) => { if (alive) setSession(current); })
+      .catch(() => undefined).finally(() => { if (alive) setIsLoading(false); });
+    return () => { alive = false; window.removeEventListener('admin-session-expired', expired); };
   }, []);
 
   useEffect(() => {
-    const client = supabase;
-    if (!client || session?.user.app_metadata.role !== 'admin') return;
-    let timeout = window.setTimeout(() => undefined, ADMIN_IDLE_TIMEOUT_MS);
-    const expireSession = () => {
-      void client.auth.signOut({ scope: 'local' }).finally(() => setSession(null));
+    if (!session) return;
+    let lastPing = Date.now();
+    let timer: number;
+    const expire = () => void logout().catch(() => undefined).finally(() => setSession(null));
+    const activity = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(expire, IDLE_MS);
+      if (Date.now() - lastPing > 30_000) {
+        lastPing = Date.now();
+        void request('session', 'PATCH').catch(() => undefined);
+      }
     };
-    const resetTimeout = () => {
-      window.clearTimeout(timeout);
-      timeout = window.setTimeout(expireSession, ADMIN_IDLE_TIMEOUT_MS);
-    };
-    const events: Array<keyof WindowEventMap> = ['pointerdown', 'keydown', 'scroll', 'touchstart'];
-    events.forEach((event) => window.addEventListener(event, resetTimeout, { passive: true }));
-    resetTimeout();
-    return () => {
-      window.clearTimeout(timeout);
-      events.forEach((event) => window.removeEventListener(event, resetTimeout));
-    };
+    const events = ['pointerdown', 'keydown', 'scroll', 'touchstart'];
+    events.forEach((event) => window.addEventListener(event, activity, { passive: true }));
+    activity();
+    return () => { window.clearTimeout(timer); events.forEach((event) => window.removeEventListener(event, activity)); };
   }, [session]);
 
   const value = useMemo<AuthContextValue>(() => ({
-    session,
-    isLoading,
-    isConfigured: Boolean(supabase),
-    isAdmin: session?.user.app_metadata.role === 'admin',
-    async signIn(email, password) {
-      if (!supabase) throw new Error('Supabase belum dikonfigurasi.');
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
-    },
-    async signOut() {
-      if (!supabase) return;
-      const { error } = await supabase.auth.signOut({ scope: 'local' });
-      if (error) throw error;
-      setSession(null);
-    },
+    session, isLoading, isConfigured: true, isAdmin: session?.user.role === 'admin',
+    async signIn(email, password) { setSession(await login(email, password)); },
+    async signOut() { await logout(); setSession(null); },
   }), [isLoading, session]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

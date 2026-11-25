@@ -1,7 +1,7 @@
 import type { Lang } from '@/i18n';
 import { localizedPublicPath, stripLanguagePrefix } from '@/lib/localizedRoutes';
 
-export const siteUrl = (import.meta.env.VITE_SITE_URL || 'https://visitiga-media.pages.dev').replace(/\/$/, '');
+export const siteUrl = (import.meta.env.VITE_SITE_URL || 'https://visitigamedia.com').replace(/\/$/, '');
 
 export function normalizePublicPath(pathname: string) {
   return stripLanguagePrefix(pathname).replace(/\/+$/, '') || '/';

@@ -1,3 +1,4 @@
+import { LocalizedEditor } from '@/components/admin/LocalizedEditor';
 import { useEffect, useState } from 'react';
 import { deletePortfolio, listPortfolios, savePortfolio } from '@/lib/adminApi';
 import { ContentModal, InputField } from '@/components/admin/ContentModal';
@@ -48,7 +49,7 @@ export default function PortfoliosPage() {
       if (!input.image_url) throw new Error('Silakan unggah gambar proyek terlebih dahulu.');
       if (!PORTFOLIO_SLUG_PATTERN.test(input.slug) || input.slug.length > 100) throw new Error('Slug hanya boleh berisi huruf kecil, angka, dan tanda hubung (maksimal 100 karakter).');
       if (items.some((item) => item.slug === input.slug && item.id !== editing?.id)) throw new Error('Slug sudah dipakai proyek lain.');
-      await savePortfolio(input, editing?.id);
+      await savePortfolio(input, editing?.id, editing?.content_id, form);
       closeEditor(); await load();
     } catch (reason) {
       const code = (reason as { code?: string } | null)?.code;
@@ -81,6 +82,6 @@ export default function PortfoliosPage() {
       <TextArea label="Deskripsi singkat" name="description" initial={editing?.description} required />
       <TextArea label="Ringkasan" name="overview" initial={editing?.overview} />
       <details className="sm:col-span-2"><summary className="cursor-pointer font-semibold">SEO (opsional)</summary><div className="mt-4 grid gap-5"><InputField label="Meta title" name="seo_title" initial={editing?.seo_title} required={false} /><TextArea label="Meta description" name="seo_description" initial={editing?.seo_description} /></div></details>
-    </ContentModal>}
+    <LocalizedEditor value={editing?.content_id} /></ContentModal>}
   </div>;
 }

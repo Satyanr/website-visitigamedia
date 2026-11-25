@@ -1,5 +1,7 @@
 # News comments rollout
 
+Historical Supabase procedure. The active Qwords implementation uses [PHP/MySQL](../docs/BACKEND_ARCHITECTURE.md).
+
 Apply `migrations/20260907000000_add_news_comments.sql` to the existing Supabase
 project before deploying the new frontend. Use the project's migration workflow
 or run the complete file once in Supabase SQL Editor. Existing news and admin

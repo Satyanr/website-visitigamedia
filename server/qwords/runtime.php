@@ -5,6 +5,13 @@ namespace Visitiga\Qwords;
 use RuntimeException;
 use Throwable;
 
+require_once __DIR__ . '/app/database.php';
+require_once __DIR__ . '/app/content.php';
+require_once __DIR__ . '/app/security.php';
+require_once __DIR__ . '/app/forms.php';
+require_once __DIR__ . '/app/media.php';
+require_once __DIR__ . '/app/api.php';
+
 const MAX_PAYLOAD = 120000;
 const MAX_TEXT = 12000;
 const MAX_NODES = 250;
@@ -19,13 +26,6 @@ function json_encode_safe(mixed $value): string
     return json_encode($value, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 }
 
-function authorization_header(array $server, array $headers = []): string
-{
-    foreach (['HTTP_AUTHORIZATION', 'REDIRECT_HTTP_AUTHORIZATION'] as $name) if (!empty($server[$name])) return (string) $server[$name];
-    foreach ($headers as $name => $value) if (strcasecmp((string) $name, 'Authorization') === 0) return (string) $value;
-    return '';
-}
-
 function slug_valid(string $slug): bool
 {
     return strlen($slug) <= 120 && preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/D', $slug) === 1;
@@ -36,23 +36,10 @@ function origin_valid(string $url): bool
     return preg_match('~^https://[a-z0-9.-]+(?::[0-9]+)?$~iD', $url) === 1;
 }
 
-function public_key_valid(string $key): bool
-{
-    if (preg_match('/^sb_publishable_[A-Za-z0-9_-]+$/D', $key)) return true;
-    $parts = explode('.', $key);
-    if (count($parts) !== 3) return false;
-    $claims = json_decode((string) base64_decode(strtr($parts[1], '-_', '+/'), true), true);
-    return is_array($claims) && ($claims['role'] ?? '') === 'anon';
-}
-
 function validate_config(array $config, array $build): void
 {
-    foreach (['site_url', 'supabase_url'] as $name) {
-        if (!origin_valid($config[$name] ?? '') || ($config[$name] ?? '') !== ($build[$name] ?? '')) throw new RuntimeException('Build configuration mismatch');
-    }
-    if (!public_key_valid($config['supabase_publishable_key'] ?? '')) throw new RuntimeException('A public Supabase key is required');
-    if (isset($build['public_key_sha256']) && !hash_equals($build['public_key_sha256'], hash('sha256', $config['supabase_publishable_key']))) throw new RuntimeException('Build public key mismatch');
-    if (($config['staging'] ?? true) !== ($build['staging'] ?? true)) throw new RuntimeException('Staging configuration mismatch');
+    if (!origin_valid($config['site_url'] ?? '') || $config['site_url'] !== ($build['site_url'] ?? '')
+        || ($config['staging'] ?? true) !== ($build['staging'] ?? true)) throw new RuntimeException('Build configuration mismatch');
 }
 
 /** Fixed server-side destinations only. No redirects; bounded TLS requests. */
@@ -83,34 +70,24 @@ function http_request(string $url, array $headers, string $method = 'GET', ?stri
     return ['status' => $status, 'body' => $responseBody];
 }
 
-function db_headers(array $config): array
+function query(array $config, string $table, string $select, array $filters = []): array
 {
-    $key = $config['supabase_publishable_key'];
-    $headers = ['apikey' => $key, 'Accept' => 'application/json'];
-    if (!str_starts_with($key, 'sb_publishable_')) $headers['Authorization'] = 'Bearer ' . $key;
-    return $headers;
+    $read = $config['_read'] ?? null;
+    if ($read) return $read($table, $select, $filters);
+    $connection = $config['_connection'] ?? static fn () => db($config);
+    return content_rows($connection(), $table, $select, $filters);
 }
 
-function query(array $config, callable $http, string $table, string $select, array $filters = []): array
+function query_one(array $config, string $table, string $column, string $value): ?array
 {
-    $url = $config['supabase_url'] . '/rest/v1/' . $table . '?' . http_build_query(['select' => $select] + $filters, '', '&', PHP_QUERY_RFC3986);
-    $response = $http($url, db_headers($config));
-    if ($response['status'] !== 200) throw new RuntimeException('Database unavailable');
-    $rows = json_decode($response['body'], true, 64, JSON_THROW_ON_ERROR);
-    if (!is_array($rows) || !array_is_list($rows)) throw new RuntimeException('Invalid database response');
-    return $rows;
+    return query($config, $table, '*', [$column => 'eq.' . $value, 'limit' => '1'])[0] ?? null;
 }
 
-function query_one(array $config, callable $http, string $table, string $column, string $value): ?array
-{
-    return query($config, $http, $table, '*', [$column => 'eq.' . $value, 'limit' => '1'])[0] ?? null;
-}
-
-function query_all(array $config, callable $http, string $table, string $select, array $filters): array
+function query_all(array $config, string $table, string $select, array $filters): array
 {
     $all = [];
     for ($offset = 0; $offset < 50000; $offset += 500) {
-        $page = query($config, $http, $table, $select, $filters + ['limit' => '500', 'offset' => (string) $offset]);
+        $page = query($config, $table, $select, $filters + ['limit' => '500', 'offset' => (string) $offset]);
         array_push($all, ...$page);
         if (count($page) < 500) return $all;
     }
@@ -126,7 +103,7 @@ function result(int $status, string $body, string $type = 'text/html; charset=ut
     ]];
 }
 
-function json_result(int $status, array $body, array $headers = []): array
+function json_result(int $status, mixed $body, array $headers = []): array
 {
     return result($status, json_encode_safe($body), 'application/json; charset=utf-8', $headers);
 }
@@ -336,15 +313,15 @@ function render_document(string $shell, array $row, string $kind, string $locale
     return $document->saveHTML();
 }
 
-function detail(array $config, callable $http, string $shell, string $locale, string $kind, string $slug): array
+function detail(array $config, string $shell, string $locale, string $kind, string $slug): array
 {
     if (!slug_valid($slug)) return result(404, 'Not found', 'text/plain; charset=utf-8', ['X-Robots-Tag' => 'noindex']);
     $row = $kind === 'news'
-        ? query($config, $http, 'news', '*', ['slug' => 'eq.' . $slug, 'published_at' => 'not.is.null', 'limit' => '1'])[0] ?? null
-        : query_one($config, $http, 'portfolios', 'slug', $slug);
+        ? query($config, 'news', '*', ['slug' => 'eq.' . $slug, 'published_at' => 'not.is.null', 'limit' => '1'])[0] ?? null
+        : query_one($config, 'portfolios', 'slug', $slug);
     if ($kind === 'portfolio' && !$row) {
-        $alias = query_one($config, $http, 'portfolio_slug_aliases', 'old_slug', $slug);
-        if ($alias && preg_match('/^[a-f0-9-]{36}$/iD', $alias['portfolio_id'] ?? '')) $row = query_one($config, $http, 'portfolios', 'id', $alias['portfolio_id']);
+        $alias = query_one($config, 'portfolio_slug_aliases', 'old_slug', $slug);
+        if ($alias && preg_match('/^[a-f0-9-]{36}$/iD', $alias['portfolio_id'] ?? '')) $row = query_one($config, 'portfolios', 'id', $alias['portfolio_id']);
         if ($row && slug_valid($row['slug'] ?? '') && $row['slug'] !== $slug) return redirect('/' . $locale . '/portfolio/' . $row['slug'] . '/');
     }
     if (!$row || ($kind === 'news' && empty($row['published_at']))) return result(404, 'Content not found', 'text/plain; charset=utf-8', ['X-Robots-Tag' => 'noindex']);
@@ -352,10 +329,10 @@ function detail(array $config, callable $http, string $shell, string $locale, st
     return result(200, render_document($shell, $row, $kind, $locale, $config));
 }
 
-function sitemap(array $config, array $build, callable $http): array
+function sitemap(array $config, array $build): array
 {
-    $news = query_all($config, $http, 'news', 'slug,updated_at,published_at', ['published_at' => 'not.is.null', 'order' => 'slug.asc']);
-    $portfolios = query_all($config, $http, 'portfolios', 'slug,updated_at', ['order' => 'slug.asc']);
+    $news = query_all($config, 'news', 'slug,updated_at,published_at', ['published_at' => 'not.is.null', 'order' => 'slug.asc']);
+    $portfolios = query_all($config, 'portfolios', 'slug,updated_at', ['order' => 'slug.asc']);
     $routes = array_map(static fn ($path) => ['path' => $path], $build['static_routes']);
     foreach (['news' => $news, 'portfolio' => $portfolios] as $kind => $rows) foreach ($rows as $row) {
         if (!slug_valid($row['slug'] ?? '')) throw new RuntimeException('Invalid sitemap slug');
@@ -406,14 +383,6 @@ function translate(array $request, array $config, callable $http): array
 {
     if ($request['method'] !== 'POST') return json_result(405, ['error' => 'Method not allowed.'], ['Allow' => 'POST']);
     if (strlen($request['body']) > MAX_PAYLOAD || (int) ($request['content_length'] ?? 0) > MAX_PAYLOAD) return json_result(413, ['error' => 'Translation payload is too large.']);
-    $token = $request['authorization'] ?? '';
-    if (!preg_match('/^Bearer [A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/D', $token)) return json_result(401, ['error' => 'Unauthorized.']);
-    // Do not decode an unverified JWT to decide admin status. Auth verifies it.
-    $auth = $http($config['supabase_url'] . '/auth/v1/user', ['apikey' => $config['supabase_publishable_key'], 'Authorization' => $token]);
-    if (in_array($auth['status'], [401, 403], true)) return json_result(401, ['error' => 'Unauthorized.']);
-    if ($auth['status'] !== 200) return json_result(503, ['error' => 'Authentication service unavailable.']);
-    $user = json_decode($auth['body'], true, 32, JSON_THROW_ON_ERROR);
-    if (empty($user['id']) || ($user['app_metadata']['role'] ?? '') !== 'admin') return json_result(401, ['error' => 'Unauthorized.']);
     if (empty($config['deepl_auth_key'])) return json_result(503, ['error' => 'Translation service is not configured.']);
     try { $body = json_decode($request['body'], false, 32, JSON_THROW_ON_ERROR); }
     catch (\JsonException) { return json_result(400, ['error' => 'Invalid JSON body.']); }
@@ -464,9 +433,9 @@ function handle(array $request, array $config, array $build, string $shell, stri
         [$rawPath, $rawQuery] = array_pad(explode('?', $request['uri'], 2), 2, '');
         $path = request_path($rawPath);
         if ($path === null) return result(404, 'Not found');
-        if ($path === '/api/translate-content' || $path === '/api/translate-content/') return translate($request, $config, $http);
+        if (str_starts_with($path, '/api/') || str_starts_with($path, '/media/')) return api_endpoint($request, $config, rtrim($path, '/'), $rawQuery, $http);
         if (!in_array($request['method'], ['GET', 'HEAD'], true)) return result(405, 'Method not allowed', 'text/plain', ['Allow' => 'GET, HEAD']);
-        $resolveDetail = static fn ($locale, $kind, $slug) => detail($config, $http, $shell, $locale, $kind, $slug);
+        $resolveDetail = static fn ($locale, $kind, $slug) => detail($config, $shell, $locale, $kind, $slug);
         $mappings = $config['migration_routes'] ?? [];
         foreach ($config['legacy_redirects'] ?? [] as $from => $to) {
             $mappings[] = ['source' => $from, 'target' => $to, 'status' => 301, 'evidence' => 'existing private mapping'];
@@ -482,7 +451,7 @@ function handle(array $request, array $config, array $build, string $shell, stri
             if (isset($routes[''])) return migration_response($routes[''], $query, $resolveDetail);
         }
         if ($path === '/robots.txt') return result(200, ($config['staging'] ? "User-agent: *\nDisallow: /\n" : "User-agent: *\nAllow: /\nDisallow: /admin\n\nSitemap: " . $config['site_url'] . "/sitemap.xml\n"), 'text/plain; charset=utf-8');
-        if ($path === '/sitemap.xml') return sitemap($config, $build, $http);
+        if ($path === '/sitemap.xml') return sitemap($config, $build);
         if ($path === '/' || $path === '/index.php') {
             if ($path === '/index.php' || array_intersect(['p', 'page_id', 'attachment_id'], array_keys(migration_query($rawQuery)))) {
                 return result(404, 'Not found', 'text/plain; charset=utf-8', ['X-Robots-Tag' => 'noindex']);
@@ -518,6 +487,14 @@ function handle(array $request, array $config, array $build, string $shell, stri
         }
         $notFound = file_get_contents($publicRoot . '/404.html');
         return result(404, $notFound === false ? 'Not found' : $notFound, 'text/html; charset=utf-8', ['X-Robots-Tag' => 'noindex']);
+    } catch (ApiProblem $error) {
+        return json_result($error->status, ['error'=>$error->getMessage(), 'code'=>$error->apiCode]);
+    } catch (\PDOException $error) {
+        if (($error->errorInfo[1] ?? null) === 1062) return json_result(409, ['error'=>'Data atau slug sudah digunakan.', 'code'=>'23505']);
+        if (in_array($error->errorInfo[1] ?? 0, [1048,1364,1406,1452], true)) return json_result(422, ['error'=>'Data atau relasi tidak valid.', 'code'=>'invalid_record']);
+        $headers = ['Retry-After'=>'60','X-Robots-Tag'=>'noindex'];
+        if (str_starts_with($request['uri'], '/api/')) return json_result(503, ['error'=>'Database sementara tidak tersedia.', 'code'=>'database_unavailable'],$headers);
+        return result(503, 'Database temporarily unavailable', 'text/plain; charset=utf-8',$headers);
     } catch (Throwable) {
         // Deliberately exclude exception messages, request bodies and credentials.
         if (str_starts_with($request['uri'], '/api/')) return json_result(503, ['error' => 'Service temporarily unavailable.']);
@@ -525,19 +502,31 @@ function handle(array $request, array $config, array $build, string $shell, stri
     }
 }
 
-function run(string $publicRoot): void
+function run(string $publicRoot, string $privateRoot = __DIR__): void
 {
     ini_set('display_errors', '0');
     try {
-        $config = require __DIR__ . '/config.php';
-        $build = json_decode(file_get_contents(__DIR__ . '/build.json'), true, 32, JSON_THROW_ON_ERROR);
-        $shell = file_get_contents(__DIR__ . '/shell.html');
-        $stream = fopen('php://input', 'rb');
-        $body = $stream ? stream_get_contents($stream, MAX_PAYLOAD + 1) : '';
-        if ($stream) fclose($stream);
+        $config = require $privateRoot . '/config.php';
+        $build = json_decode(file_get_contents($privateRoot . '/build.json'), true, 32, JSON_THROW_ON_ERROR);
+        $shell = file_get_contents($privateRoot . '/shell.html');
+        $connection = null;
+        $config['_public_root'] = $publicRoot;
+        $settings = $config;
+        $config['_connection'] = static function () use (&$connection, $settings) { return $connection ??= db($settings); };
+        $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
+        $body = '';
+        if (!str_starts_with(strtolower($contentType), 'multipart/form-data')) {
+            $stream = fopen('php://input', 'rb');
+            if ($stream) {
+                $body = stream_get_contents($stream, 500001) ?: '';
+                fclose($stream);
+            }
+        }
         $request = ['uri' => $_SERVER['REQUEST_URI'] ?? '/', 'method' => $_SERVER['REQUEST_METHOD'] ?? 'GET',
-            'authorization' => authorization_header($_SERVER, function_exists('getallheaders') ? getallheaders() : []),
-            'content_length' => $_SERVER['CONTENT_LENGTH'] ?? 0, 'body' => $body ?: ''];
+            'content_length' => $_SERVER['CONTENT_LENGTH'] ?? 0, 'content_type'=>$contentType, 'body'=>$body,
+            'origin'=>$_SERVER['HTTP_ORIGIN'] ?? '', 'csrf'=>$_SERVER['HTTP_X_CSRF_TOKEN'] ?? '',
+            'export_key'=>$_SERVER['HTTP_X_QWORDS_EXPORT'] ?? '', 'ip'=>$_SERVER['REMOTE_ADDR'] ?? '',
+            'range'=>$_SERVER['HTTP_RANGE'] ?? '', 'https'=>in_array(strtolower($_SERVER['HTTPS'] ?? ''), ['on','1'],true)];
         $deadline = hrtime(true) + 20_000_000_000;
         $http = static function ($url, $headers, $method = 'GET', $body = null) use ($deadline): array {
             $remaining = (int) floor(($deadline - hrtime(true)) / 1_000_000);
@@ -553,5 +542,8 @@ function run(string $publicRoot): void
     }
     http_response_code($response['status']);
     foreach ($response['headers'] as $name => $value) header($name . ': ' . $value);
-    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'HEAD') echo $response['body'];
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'HEAD') {
+        if (isset($response['file'])) send_media($response['file']);
+        else echo $response['body'];
+    }
 }

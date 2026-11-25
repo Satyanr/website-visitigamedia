@@ -8,20 +8,10 @@ export function inlineScriptHashes(html) {
     .map(([, , source]) => `'sha256-${createHash('sha256').update(source).digest('base64')}'`);
 }
 
-export function assertPublicKey(key) {
-  if (/^sb_publishable_[A-Za-z0-9_-]+$/.test(key)) return;
-  try {
-    const parts = key.split('.');
-    if (parts.length === 3 && JSON.parse(Buffer.from(parts[1], 'base64url').toString()).role === 'anon') return;
-  } catch { /* Fail closed without printing key material. */ }
-  throw new Error('Gunakan Supabase publishable key atau legacy anon JWT; privileged key ditolak.');
-}
-
 export function assertBuildEnvironment(env) {
   for (const name of Object.keys(env)) {
-    if (/^VITE_.*(?:SECRET|SERVICE_ROLE|DEEPL|AUTH_KEY|PRIVATE)/i.test(name) && env[name]) throw new Error(`Variabel frontend terlarang: ${name}`);
+    if (/^VITE_.*(?:SECRET|SERVICE_ROLE|DEEPL|AUTH_KEY|PRIVATE|PASSWORD|EXPORT_KEY)/i.test(name) && env[name]) throw new Error(`Variabel frontend terlarang: ${name}`);
   }
-  if (env.VITE_SUPABASE_PUBLISHABLE_KEY) assertPublicKey(env.VITE_SUPABASE_PUBLISHABLE_KEY);
 }
 
 export function legacyApps(value = '') {
@@ -36,13 +26,7 @@ export function legacyApps(value = '') {
 export function renderHtaccess(template, hashes, build) {
   const apps = legacyApps((build.legacy_apps ?? []).join(',')).join('|') || '(?!)';
   const scope = `"expr=%{REQUEST_URI} !~ m#^/(?:(?:${apps})(?:/|$)|\\.well-known/acme-challenge/)#"`;
-  const supabase = build.supabase_url;
-  if (supabase && !/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(supabase)) throw new Error('Origin Supabase tidak valid untuk CSP.');
-  const headers = supabase ? template.replace(/\b(img-src|media-src|connect-src) ([^;]*);/g, (_, directive, sources) => {
-    const realtime = directive === 'connect-src' ? ` ${supabase.replace(/^https:/i, 'wss:')}` : '';
-    return `${directive} ${sources} ${supabase}${realtime};`;
-  }) : template;
-  return headers.replaceAll('__QWORDS_LEGACY_APPS__(?!)', apps)
+  return template.replaceAll('__QWORDS_LEGACY_APPS__(?!)', apps)
     .replace(/script-src 'self'[^;]*;/, `script-src 'self' ${hashes.join(' ')};`)
     .replace(/^([ \t]+Header (?:always )?set .+)$/gm, `$1 ${scope}`)
     + (build.staging ? '\n<IfModule mod_headers.c>\n  Header always set X-Robots-Tag "noindex, nofollow"\n</IfModule>\n' : '');

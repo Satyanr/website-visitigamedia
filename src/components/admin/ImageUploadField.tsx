@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from 'react';
 import { ImagePlus, LoaderCircle } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { api } from '@/lib/api';
 
 const MAX_FILE_SIZE = 8 * 1024 * 1024;
 const MAX_IMAGE_DIMENSION = 1600;
@@ -40,15 +40,15 @@ export function ImageUploadField({ name, label = 'Gambar', initial = '', folder,
     if (!file) return;
     if (!file.type.startsWith('image/')) { setError('Pilih file gambar (JPG, PNG, WebP, dan sejenisnya).'); return; }
     if (file.size > MAX_FILE_SIZE) { setError('Ukuran gambar maksimal 8 MB.'); return; }
-    if (!supabase) { setError('Supabase belum dikonfigurasi.'); return; }
+    if (!api) { setError('Layanan website belum tersedia.'); return; }
     setUploading(true); setError('');
     try {
       const uploadFile = await compressForUpload(file, folder);
       const extension = uploadFile.name.split('.').pop()?.toLowerCase() || 'jpg';
       const path = `${folder}/${crypto.randomUUID()}.${extension}`;
-      const { error: uploadError } = await supabase.storage.from('website-media').upload(path, uploadFile, { cacheControl: '31536000', contentType: uploadFile.type, upsert: false });
+      const { error: uploadError } = await api.media.upload(path, uploadFile);
       if (uploadError) throw uploadError;
-      setUrl(supabase.storage.from('website-media').getPublicUrl(path).data.publicUrl);
+      setUrl(api.media.getPublicUrl(path).data.publicUrl);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Gambar tidak dapat diunggah.'); }
     finally { setUploading(false); }
   };

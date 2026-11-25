@@ -16,9 +16,10 @@ await mkdir(outputRoot, { recursive: true });
 if (await realpath(outputRoot) !== join(await realpath(root), 'artifacts')) throw new Error('Unsafe package destination.');
 const env = { ...loadEnv('production', root, ''), ...process.env };
 assertBuildEnvironment(env);
-const secrets = Object.entries(env).filter(([name]) => /(?:DEEPL_AUTH_KEY|SUPABASE_SERVICE_ROLE_KEY|SUPABASE_SECRET_KEY)/i.test(name)).map(([, value]) => value).filter(Boolean);
+const secrets = Object.entries(env).filter(([name]) => /(?:DEEPL_AUTH_KEY|SUPABASE_SERVICE_ROLE_KEY|SUPABASE_SECRET_KEY|QWORDS_EXPORT_KEY|QWORDS_APP_SECRET|DB_PASSWORD|DATABASE_PASSWORD)/i.test(name))
+  .map(([, value]) => value).filter(Boolean);
 const build = JSON.parse(await readFile(join(source, 'qwords-build.json'), 'utf8'));
-if (typeof build.staging !== 'boolean' || (!build.staging && (build.offline || build.site_url !== 'https://visitigamedia.com' || !build.public_key_sha256))) {
+if (build.backend !== 'mysql' || typeof build.staging !== 'boolean' || (!build.staging && (build.offline || build.site_url !== 'https://visitigamedia.com'))) {
   throw new Error('Mode produksi tidak valid pada build metadata.');
 }
 await artifactManifest(source, secrets); // Scan BEFORE creating any uploadable package.
@@ -47,6 +48,15 @@ for (const { path, name } of publicFiles) {
   await cp(path, target);
 }
 await cp(join(root, 'server/qwords/runtime.php'), join(privateRoot, 'runtime.php'));
+const privateFiles = {
+  app: ['api.php','content.php','database.php','forms.php','media.php','schema.php','schema.json','security.php'],
+  database: ['001_initial.sql','002_report_index.sql'],
+  tools: ['admin-sql.php','content-export.php','import.php','maintenance.php','private-cli.php'],
+};
+for (const [folder, files] of Object.entries(privateFiles)) {
+  await mkdir(join(privateRoot, folder));
+  for (const file of files) await cp(join(root, 'server/qwords', folder, file), join(privateRoot, folder, file));
+}
 await cp(join(root, 'server/qwords/config.example.php'), join(privateRoot, 'config.example.php'));
 await cp(join(source, 'portfolio-fallback.html'), join(privateRoot, 'shell.html'));
 await writeFile(join(privateRoot, 'build.json'), JSON.stringify(build, null, 2));

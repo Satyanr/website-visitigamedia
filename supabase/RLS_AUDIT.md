@@ -1,5 +1,7 @@
 # RLS access audit
 
+Historical Supabase policy inventory. For the active Qwords authorization model see the [backend architecture](../docs/BACKEND_ARCHITECTURE.md).
+
 All application tables have Row Level Security enabled. `authenticated` does
 not mean admin by itself; write policies additionally require
 `public.is_admin()`, which reads the trusted Auth `app_metadata.role` claim.

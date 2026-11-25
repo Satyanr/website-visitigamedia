@@ -1,21 +1,16 @@
-# Daftar perubahan audit Qwords
+# Perubahan Qwords
 
-Audit repository lokal 25 November 2026. Frontend React/Vite/TypeScript/Tailwind/Framer Motion, aplikasi CMS dan backend Supabase tetap memakai arsitektur existing. Workflow Cloudflare tetap manual. Qwords menggunakan PHP dan aset statis pada hosting.
+Migrasi lokal dari SDK Supabase dan Cloudflare Functions ke API PHP/MySQL, 25 November 2026. PostgreSQL migrations historis tetap tersedia.
 
-| File | Perubahan |
+| Area | File utama dan perubahan |
 | --- | --- |
-| `server/qwords/.htaccess` | Default tertutup, ACME khusus challenge, perlindungan sisa skrip WordPress/backup, inheritance untuk aplikasi legacy terverifikasi, kebijakan CSP/cache terbatas pada situs yang dikelola. |
-| `server/qwords/entry.php`, `runtime.php`, `config.example.php` | Bootstrap gagal tertutup; kecocokan konfigurasi dan public key; deadline upstream, query publik berita, canonical/alias dan support inventory WordPress exact path/query/410. |
-| `scripts/build-qwords.mjs`, `scripts/prerender.mjs` | Origin produksi tetap, larangan offline produksi, mode/noindex dan metadata, pemeriksaan dataset publik dan metadata SEO, prerender statis Qwords saja. |
-| `scripts/qwords-lib.mjs`, `scripts/package-qwords.mjs`, `scripts/qwords-zip.php` | Hasilkan allowlist/CSP, whitelist file rilis, pisahkan public/private, inventaris file SHA-256, ZIP lintas OS, verifikasi integritas dan laporan disk/inode. |
-| `scripts/validate-qwords-redirects.php` | Validator CLI menggunakan aturan yang sama seperti dispatcher. |
-| `scripts/check-performance-budget.mjs`, `src/components/Logo.tsx`, `src/assets/logo-visitiga-horizontal.webp` | WebP lossless 420 px dari logo horizontal yang sudah ada untuk navbar/footer. Aset tersebut wajib ikut perhitungan budget. Dimensi tampilan dan branding dipertahankan. |
-| `package.json`, `package-lock.json` | Perintah verifikasi ZIP/redirect. Resolusi DOMPurify saja naik dari 3.4.14 ke 3.5.0 dalam rentang existing untuk menutup advisori dependency runtime. |
-| `supabase/migrations/20261125000000_separate_public_careers_read_policy.sql` | Pisahkan read lowongan publik dari fungsi pemeriksaan admin. Kebijakan admin existing tetap memberi akses ke semua lowongan. Migrasi disiapkan di repo dan perlu diuji di project terisolasi. |
-| `tests/qwords/apache.test.mjs`, `runtime.test.mjs`, `runtime-check.php` | Apache native Windows/Linux, hard fail bila integrasi wajib, fixture routing legacy/WordPress/ACME, status detail, mapping dan validasi. |
-| `tests/qwords/preflight.php` | Probe HTTPS bertoken, hanya boolean, digunakan sementara di staging. |
-| `.github/workflows/build-qwords.yml` | Dispatch staging/produksi untuk artifact, environment produksi berpagar, PHP CLI matrix 8.2/8.3/8.4, Apache Linux, browser dan budget sebelum artifact online. |
-| `DEPLOY_QWORDS.md`, `docs/QWORDS_CHANGES.md`, `docs/QWORDS_VALIDATION.md` | Checklist host, prosedur upload manual, build/rebuild CMS, audit Supabase dan bukti pengujian. |
-| `docs/QWORDS_PREFLIGHT.md`, `docs/WORDPRESS_MIGRATION.md`, `docs/QWORDS_ROLLBACK.md` | Instruksi probe/removal, template inventaris/koeksistensi dan prosedur pemulihan. |
+| MySQL | `server/qwords/database/001_initial.sql` dan `002_report_index.sql` memberi skema InnoDB, sejarah versi, ID/slug/alias, foreign keys, indeks, JSON ID/EN dan watchdog table. |
+| Backend | `server/qwords/app/{api,content,database,forms,media,security,schema}.php` dan `schema.json` memberi PDO, CRUD dan filter, transaksi, cookie admin/CSRF, rate limit, agregasi dashboard dan registri media. |
+| Routing | `server/qwords/{runtime.php,.htaccess,config.example.php}` memakai backend lokal yang sama untuk API, detail SEO, sitemap dan file. Legacy allowlist, ACME dan mapping WordPress dipertahankan. |
+| Frontend | `src/lib/api.ts`, `adminApi.ts`, `publicApi.ts`, `translation.ts`, `AuthContext.tsx`, adapter analytics/observability/comments/form dan editor. React layout dan konsep CMS tetap. Field terjemahan ID manual ditambahkan pada editor yang sebelumnya otomatis, dan dashboard polling saat terlihat. |
+| Build | `scripts/{build-qwords,package-qwords,prerender,qwords-lib,seed-qwords}.mjs`, `scripts/qwords-zip.php`, package/lockfile dan `.github/workflows/build-qwords.yml`. Snapshot publik menggantikan Supabase. Deployment workflow Cloudflare serta SDK dihapus dari jalur aktif. |
+| Operasi data | `server/qwords/tools/` berisi import dengan dry-run/idempotensi, export publik, generator SQL hash admin dan maintenance privat. Seed rekonstruksi berasal dari source repo. |
+| Regresi | `tests/qwords/` menambah integrasi MariaDB nyata dan memperbarui fixture Apache/runtime/preflight. `tests/qwords-e2e/` menguji browser lewat API same-origin. |
+| Dokumentasi | Runbook DirectAdmin, migrations, admin, media, API, backup/rollback dan matriks fitur. |
 
-Mapping WordPress dan path legacy default kosong. Keputusan tentang aplikasi mana yang harus dipertahankan, ekuivalensi URL, layout vhost, dan penggunaan Supabase yang sebenarnya memerlukan inventaris serta hasil staging. Lihat [status validasi](QWORDS_VALIDATION.md).
+Perubahan detail tersedia di Git diff. [Matriks fitur](BACKEND_ARCHITECTURE.md) · [Validasi](QWORDS_VALIDATION.md).

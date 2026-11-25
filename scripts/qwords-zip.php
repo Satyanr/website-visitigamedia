@@ -17,7 +17,8 @@ function verify_zip(ZipArchive $zip): void
         for ($folder = dirname($path); $folder !== '.'; $folder = dirname($folder)) $directories[$folder . '/'] = true;
     }
     foreach (['public_html/.htaccess', 'public_html/_qwords.php', 'public_html/index.html', 'qwords-private/runtime.php',
-        'qwords-private/config.example.php', 'qwords-private/shell.html', 'qwords-private/build.json'] as $required) {
+        'qwords-private/config.example.php', 'qwords-private/shell.html', 'qwords-private/build.json',
+        'qwords-private/app/api.php','qwords-private/database/001_initial.sql'] as $required) {
         if (!isset($expected[$required])) throw new RuntimeException('Required archive file missing');
     }
     $seen = [];

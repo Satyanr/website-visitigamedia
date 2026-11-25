@@ -29,16 +29,16 @@ test.beforeEach(async ({ page }) => {
     local.host = '127.0.0.1:4186';
     await route.fulfill({ response: await route.fetch({ url: local.href }) });
   });
-  // Only the explicitly fake project is mocked; requests never touch production.
-  await page.route('https://qwords-test.supabase.co/**', async (route) => {
+  await page.route('https://qwords-stage.example.test/api/**', async (route) => {
     const url = new URL(route.request().url());
-    if (url.pathname.includes('/rpc/')) return route.fulfill({ status: 204, body: '' });
+    if (!url.pathname.startsWith('/api/content/')) return route.fulfill({ status: 200, json: null });
     const table = url.pathname.split('/').at(-1) || '';
-    if (table in staticRows) return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(staticRows[table]) });
+    if (table in staticRows) return route.fulfill({ status: 200, json: { rows: staticRows[table] } });
     let rows = table === 'news' ? data.news : table === 'portfolios' ? data.portfolios : [];
-    const slug = url.searchParams.get('slug');
-    if (slug) rows = rows.filter((row) => `eq.${row.slug}` === slug);
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(rows) });
+    const filters = JSON.parse(url.searchParams.get('filters') ?? '[]');
+    const slug = filters.find(([field]: [string]) => field === 'slug')?.[2];
+    if (slug) rows = rows.filter((row) => row.slug === slug);
+    return route.fulfill({ status: 200, json: { rows } });
   });
 });
 

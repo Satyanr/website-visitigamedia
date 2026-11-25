@@ -46,10 +46,10 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
-          extensions: curl, openssl, mbstring, dom, json, libxml, zip
+          extensions: pdo_mysql, fileinfo, session, curl, openssl, mbstring, dom, json, libxml, zip
           coverage: none
       - run: |
-          php -r 'foreach (["curl","openssl","mbstring","dom","json","libxml","zip"] as $ext) if (!extension_loaded($ext)) { fwrite(STDERR, "Missing extension: $ext\n"); exit(1); }'
+          php -r 'foreach (["pdo_mysql","fileinfo","session","openssl","mbstring","dom","json","libxml","zip"] as $ext) if (!extension_loaded($ext)) { fwrite(STDERR, "Missing extension: $ext\n"); exit(1); }'
           find server/qwords tests/qwords scripts -name '*.php' -print0 | xargs -0 -n 1 php -l
           node --test tests/qwords/runtime.test.mjs
         env:
@@ -59,6 +59,19 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     environment: qwords-${{ inputs.mode }}
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_ROOT_PASSWORD: fixture-root-only
+          MARIADB_DATABASE: visitiga_ci
+          MARIADB_USER: visitiga_ci
+          MARIADB_PASSWORD: fixture-app-only
+        ports:
+          - 33060:3306
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 5s --health-timeout 4s --health-retries 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,26 +84,30 @@ jobs:
         env:
           MODE: ${{ inputs.mode }}
           APPROVAL_GATE: ${{ secrets.QWORDS_PRODUCTION_APPROVAL_GATE }}
-          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          QWORDS_CONTENT_API: ${{ vars.QWORDS_CONTENT_API }}
+          QWORDS_EXPORT_KEY: ${{ secrets.QWORDS_EXPORT_KEY }}
         run: |
-          [[ -n "$VITE_SUPABASE_URL" && -n "$VITE_SUPABASE_PUBLISHABLE_KEY" ]] || { echo 'Configure authorized Supabase settings in the selected environment.'; exit 1; }
+          [[ -n "$QWORDS_CONTENT_API" && -n "$QWORDS_EXPORT_KEY" ]] || { echo 'Configure the authorized HTTPS public-content export.'; exit 1; }
           if [[ "$MODE" == production && -z "$APPROVAL_GATE" ]]; then
             echo 'Protected qwords-production approval environment is required.'
             exit 1
           fi
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: sudo apt-get update && sudo apt-get install -y apache2 libapache2-mod-php php-cli php-curl php-xml php-mbstring php-zip
+      - run: sudo apt-get update && sudo apt-get install -y apache2 libapache2-mod-php php-cli php-curl php-xml php-mbstring php-zip php-mysql mariadb-client
+      - run: cat server/qwords/database/0*.sql | mariadb --protocol=TCP -h127.0.0.1 -P33060 -u root -pfixture-root-only visitiga_ci
       - run: npm run lint && npm run typecheck && npm test && npm run test:qwords
         env:
           QWORDS_REQUIRE_APACHE: 'true'
           QWORDS_REQUIRE_PHP: 'true'
+          QWORDS_REQUIRE_MYSQL: 'true'
+          QWORDS_TEST_MYSQL_PORT: '33060'
+          QWORDS_TEST_MYSQL_DATABASE: visitiga_ci
+          QWORDS_TEST_MYSQL_USER: visitiga_ci
+          QWORDS_TEST_MYSQL_PASSWORD: fixture-app-only
       - name: Verify test site with isolated fixtures
         env:
           VITE_SITE_URL: https://qwords-stage.example.test
-          VITE_SUPABASE_URL: https://qwords-test.supabase.co
-          VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_test_only
           QWORDS_STAGING: 'true'
           QWORDS_ALLOW_OFFLINE: 'true'
           BUILD_OUTPUT_DIR: dist-qwords
@@ -106,8 +123,8 @@ jobs:
           QWORDS_ALLOW_OFFLINE: 'false'
           QWORDS_LEGACY_APPS: ${{ vars.QWORDS_LEGACY_APPS }}
           VITE_SITE_URL: ${{ inputs.mode == 'production' && 'https://visitigamedia.com' || inputs.site_url }}
-          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          QWORDS_CONTENT_API: ${{ vars.QWORDS_CONTENT_API }}
+          QWORDS_EXPORT_KEY: ${{ secrets.QWORDS_EXPORT_KEY }}
           BUILD_OUTPUT_DIR: dist-qwords
           MODE: ${{ inputs.mode }}
         run: |

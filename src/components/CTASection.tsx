@@ -67,13 +67,13 @@ export default function CTASection({ variant = 'full', content }: { variant?: 'c
 
     const form = new FormData(formElement);
     try {
-      const { supabase } = await import('@/lib/supabase');
-      if (!supabase) {
+      const { api } = await import('@/lib/api');
+      if (!api) {
         setFormError(en ? 'The form is not currently configured. Please contact the website administrator.' : 'Konfigurasi formulir belum tersedia. Hubungi administrator website.');
         setFormStatus('error');
         return;
       }
-      const { error } = await supabase.rpc('submit_contact_message', {
+      const { error } = await api.rpc('submit_contact_message', {
         p_name: String(form.get('name') ?? '').trim(),
         p_email: String(form.get('email') ?? '').trim(),
         p_phone: String(form.get('phone') ?? '').trim() || null,

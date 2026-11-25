@@ -1,3 +1,4 @@
+import { LocalizedEditor } from '@/components/admin/LocalizedEditor';
 import { useState } from 'react';
 import { saveNews } from '@/lib/adminApi';
 import { ContentModal, InputField } from '@/components/admin/ContentModal';
@@ -29,7 +30,7 @@ export function NewsEditor({ article, onClose, onSaved }: { article: NewsRecord 
         seo_title: String(form.get('seo_title')).trim(), seo_description: String(form.get('seo_description')).trim(),
         cover_alt: String(form.get('cover_alt')).trim(), target_keyword: String(form.get('target_keyword')).trim(),
         published_at: date ? new Date(`${date}T00:00:00`).toISOString() : null,
-      }, article?.id);
+      }, article?.id, article?.content_id, form);
       await onSaved();
       onClose();
     } catch (reason) {
@@ -69,5 +70,5 @@ export function NewsEditor({ article, onClose, onSaved }: { article: NewsRecord 
       </div>
     </details>
     <RichTextEditor name="content" initial={article?.content} />
-  </ContentModal>;
+  <LocalizedEditor value={article?.content_id} /></ContentModal>;
 }

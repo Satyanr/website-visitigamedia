@@ -52,8 +52,9 @@ $config = ['site_url'=>'https://stage.example.test','supabase_url'=>'https://db.
 $build = ['site_url'=>$config['site_url'],'supabase_url'=>$config['supabase_url'],'staging'=>false,'static_routes'=>['/','/about']];
 $tables = json_decode(file_get_contents('${path(resolve('tests/qwords/browser-data.json'))}'),true);
 $http = static function($url,$headers) use($tables) { if(str_contains($url,'/auth/v1/user')) return ['status'=>200,'body'=>'{"id":"admin-1","app_metadata":{"role":"admin"}}']; parse_str(parse_url($url,PHP_URL_QUERY)??'', $query); $rows=$tables[basename(parse_url($url,PHP_URL_PATH))]??[]; if(isset($query['slug']) && $query['slug']!=='eq.test-news' && $query['slug']!=='eq.current-news') $rows=[]; if(isset($query['slug']) && $query['slug']==='eq.current-news' && $rows) $rows[0]['slug']='current-news'; return ['status'=>200,'body'=>json_encode($rows)]; };
+$config['_read'] = static function ($table,$select,$filters) use ($http) { return json_decode($http('https://fixture.example.test/rest/v1/'.$table.'?'.http_build_query($filters),[])['body'],true); };
 $shell='<!doctype html><html><head><title>Shell</title></head><body><div id="root"></div></body></html>';
-$r=\\Visitiga\\Qwords\\handle(['uri'=>$_SERVER['REQUEST_URI'],'method'=>$_SERVER['REQUEST_METHOD'],'body'=>file_get_contents('php://input'),'authorization'=>\\Visitiga\\Qwords\\authorization_header($_SERVER,function_exists('getallheaders')?getallheaders():[])],$config,$build,$shell,__DIR__,$http);
+$r=\\Visitiga\\Qwords\\handle(['uri'=>$_SERVER['REQUEST_URI'],'method'=>$_SERVER['REQUEST_METHOD'],'body'=>file_get_contents('php://input'),'origin'=>$_SERVER['HTTP_ORIGIN']??''],$config,$build,$shell,__DIR__,$http);
 http_response_code($r['status']); foreach($r['headers'] as $k=>$v) header($k.': '.$v); echo $r['body'];`);
     const config = `ServerRoot "${apacheRoot}"
 Listen 127.0.0.1:4187
@@ -152,13 +153,13 @@ DocumentRoot "${path(publicRoot)}"
       assert.equal(response.headers.get('x-frame-options'), 'DENY');
       assert.match(response.headers.get('content-security-policy'), /frame-ancestors 'none'/);
       assert.equal(response.headers.get('strict-transport-security'), null);
-      assert.equal((await get('/api/translate-content', { method: 'POST', body: '{}' })).status, 401);
-      assert.equal((await get('/api/translate-content', { method: 'POST', headers: { Authorization: 'Bearer test.token.signature' }, body: '{}' })).status, 503, 'Verified admin reaches unconfigured DeepL, proving Authorization reaches PHP');
+      assert.equal((await get('/api/translate-content', { method: 'POST', headers: { Origin: 'https://stage.example.test' }, body: '{}' })).status, 401);
     });
     await t.test('production entry fails closed without private config and serves static pages with it', async () => {
       const privateRoot = join(directory, 'qwords-private');
       await mkdir(privateRoot);
       await cp('server/qwords/runtime.php', join(privateRoot, 'runtime.php'));
+      await cp('server/qwords/app', join(privateRoot, 'app'), { recursive: true });
       await cp('server/qwords/entry.php', join(publicRoot, '_qwords.php'));
       await writeFile(join(privateRoot, 'shell.html'), '<html><head></head><body><div id="root"></div></body></html>');
       await writeFile(join(privateRoot, 'build.json'), JSON.stringify({ site_url: 'https://stage.example.test', supabase_url: 'https://db.supabase.co', staging: true, static_routes: ['/', '/about'] }));

@@ -4,7 +4,6 @@ import { Bell, BriefcaseBusiness, ChevronLeft, ContactRound, Film, Home, Inbox, 
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAdminNotificationCounts } from '@/lib/adminApi';
-import { supabase } from '@/lib/supabase';
 import type { AdminNotificationCounts } from '@/types/admin';
 
 type AdminLink = { to: string; label: string; icon: typeof LayoutDashboard; end?: boolean; notification?: 'contacts' | 'careers' };
@@ -34,16 +33,13 @@ export default function AdminLayout() {
   const email = session?.user.email ?? 'Admin';
 
   useEffect(() => {
-    const client = supabase;
-    if (!client) return;
-    const refresh = () => void getAdminNotificationCounts().then(setNotifications).catch(() => undefined);
+    const refresh = () => {
+      if (!document.hidden) void getAdminNotificationCounts().then(setNotifications).catch(() => undefined);
+    };
     refresh();
-    const channel = client.channel('admin-notifications')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'contact_messages' }, refresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'careers_submissions' }, refresh)
-      .subscribe();
     const interval = window.setInterval(refresh, 30_000);
-    return () => { window.clearInterval(interval); void client.removeChannel(channel); };
+    document.addEventListener('visibilitychange', refresh);
+    return () => { window.clearInterval(interval); document.removeEventListener('visibilitychange', refresh); };
   }, []);
 
   const logout = async () => {

@@ -7,60 +7,77 @@ import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 import { loadEnv } from 'vite';
 import { buildRedirects, buildSitemap, canonicalRoute, localizedRoute, SEO_LANGUAGES, STATIC_ROUTES } from './seo-build-lib.mjs';
-import { publicSupabaseHeaders } from './supabase-headers.mjs';
 import { offlineBuildContent } from './prerender-defaults.mjs';
 
 const projectRoot = process.cwd();
 const distDir = join(projectRoot, process.env.BUILD_OUTPUT_DIR || 'dist');
 const env = { ...loadEnv('production', projectRoot, ''), ...process.env };
-const siteUrl = (env.VITE_SITE_URL || 'https://visitiga-media.pages.dev').replace(/\/$/, '');
+const siteUrl = (env.VITE_SITE_URL || 'https://visitigamedia.com').replace(/\/$/, '');
 if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(siteUrl)) {
   throw new Error('VITE_SITE_URL harus berupa origin HTTPS tanpa path.');
 }
-const supabaseUrl = env.VITE_SUPABASE_URL?.replace(/\/$/, '');
-const supabaseKey = env.VITE_SUPABASE_PUBLISHABLE_KEY;
 const requireNews = env.SEO_REQUIRE_NEWS === 'true';
 const qwordsStaticOnly = env.QWORDS_STATIC_ONLY === 'true';
+const publicTables = ['news','portfolios','products','service_content','service_landings','product_catalogue',
+  'homepage_content','about_content','contact_settings','careers_jobs','careers_page_content'];
 
-async function fetchPublicTable(table, select = '*', filters = {}) {
-  if (!supabaseUrl || !supabaseKey) {
-    return null;
+async function publicSnapshot() {
+  let value;
+  if (env.QWORDS_CONTENT_EXPORT && env.QWORDS_CONTENT_API) throw new Error('Pilih satu sumber snapshot konten.');
+  if (env.QWORDS_CONTENT_EXPORT) {
+    const text = await readFile(env.QWORDS_CONTENT_EXPORT, 'utf8');
+    if (Buffer.byteLength(text) > 32 * 1024 * 1024) throw new Error('Snapshot terlalu besar.');
+    value = JSON.parse(text.replace(/^\uFEFF/, ''));
+  } else {
+    const origin = env.QWORDS_CONTENT_API || '';
+    if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(origin) || (env.QWORDS_EXPORT_KEY || '').length < 32) throw new Error('Sumber snapshot HTTPS dan token privat diperlukan.');
+    const response = await fetch(origin + '/api/content-export', {
+      headers: { 'X-Qwords-Export': env.QWORDS_EXPORT_KEY }, signal: AbortSignal.timeout(20_000), redirect: 'error',
+    });
+    if (!response.ok) throw new Error(`Ekspor konten gagal (HTTP ${response.status}).`);
+    const reader = response.body.getReader();
+    const chunks = [];
+    let received = 0;
+    while (true) {
+      const { done, value: chunk } = await reader.read();
+      if (done) break;
+      received += chunk.length;
+      if (received > 32 * 1024 * 1024) {
+        await reader.cancel();
+        throw new Error('Snapshot terlalu besar.');
+      }
+      chunks.push(Buffer.from(chunk));
+    }
+    value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
   }
-  const query = new URL(`${supabaseUrl}/rest/v1/${table}`);
-  query.searchParams.set('select', select);
-  for (const [key, value] of Object.entries(filters)) query.searchParams.set(key, value);
-  const response = await fetch(query, { headers: publicSupabaseHeaders(supabaseKey), signal: AbortSignal.timeout(15_000) });
-  if (!response.ok) {
-    const message = `Supabase mengembalikan ${response.status} saat mengambil ${table} untuk prerender.`;
-    if (requireNews) throw new Error(message);
-    console.warn(`[seo] ${message}`);
-    return null;
+  const fields = JSON.parse(await readFile(new URL('../server/qwords/app/schema.json', import.meta.url), 'utf8'));
+  if (value?.version !== 1 || !value.tables || Object.keys(value.tables).some((name) => !publicTables.includes(name))) throw new Error('Format snapshot publik tidak valid.');
+  for (const table of publicTables) {
+    const rows = value.tables[table];
+    if (!Array.isArray(rows) || rows.length > 10000) throw new Error(`Snapshot ${table} tidak valid.`);
+    for (const row of rows) {
+      if (!row || Array.isArray(row) || typeof row !== 'object' || Object.keys(row).some((key) =>
+        !Object.prototype.hasOwnProperty.call(fields[table], key) && !(table === 'service_landings' && key === 'service_landing_portfolios'))) throw new Error(`Kolom snapshot ${table} tidak valid.`);
+      if (table === 'service_landings' && (!Array.isArray(row.service_landing_portfolios) || row.service_landing_portfolios.some((link) =>
+        !link || Object.keys(link).some((key) => !['portfolio_id','position'].includes(key))))) throw new Error('Relasi snapshot tidak valid.');
+      if ((table === 'news' && !row.published_at) || (table === 'careers_jobs' && row.status !== 'published')) throw new Error('Snapshot berisi konten belum terbit.');
+      if (/https?:[^"\s]*\/storage\/v1\/object\//i.test(JSON.stringify(row))) throw new Error('Pindahkan referensi Supabase Storage ke media lokal sebelum build.');
+      if (JSON.stringify(row).includes('/api/admin/files/')) throw new Error('Snapshot publik memuat referensi dokumen privat.');
+    }
   }
-  const rows = await response.json();
-  if (!Array.isArray(rows)) throw new Error(`Respons CMS tidak valid untuk ${table}.`);
-  return rows;
+  return value.tables;
 }
 
 async function getBuildContent() {
-  if (env.SEO_OFFLINE === 'true' && requireNews) throw new Error('SEO_OFFLINE tidak boleh dipakai dengan SEO_REQUIRE_NEWS=true.');
-  if (env.SEO_OFFLINE === 'true' || !supabaseUrl || !supabaseKey) {
-    if (requireNews) throw new Error('SEO_REQUIRE_NEWS=true, tetapi kredensial Supabase tidak tersedia.');
-    console.warn('[seo] Kredensial Supabase tidak tersedia; prerender lokal memakai fallback statis.');
+  if (env.SEO_OFFLINE === 'true' || (!env.QWORDS_CONTENT_EXPORT && !env.QWORDS_CONTENT_API)) {
+    if (requireNews) throw new Error('Snapshot konten publik diperlukan.');
+    console.warn('[seo] Prerender lokal memakai fallback statis.');
     return offlineBuildContent();
   }
-  const [news, portfolios, products, serviceRows, serviceLandings, catalogueRows, homepageRows, aboutRows, contactRows, careerJobs, careersRows] = await Promise.all([
-    fetchPublicTable('news', '*', { published_at: 'not.is.null', order: 'published_at.desc' }),
-    fetchPublicTable('portfolios', '*', { order: 'created_at.desc' }),
-    fetchPublicTable('products', '*', { order: 'sort_order.asc,created_at.asc' }),
-    fetchPublicTable('service_content', '*', { id: 'eq.1' }),
-    fetchPublicTable('service_landings', '*,service_landing_portfolios(portfolio_id,position)', { order: 'slug.asc' }),
-    fetchPublicTable('product_catalogue', '*', { id: 'eq.1' }),
-    fetchPublicTable('homepage_content', '*', { id: 'eq.1' }),
-    fetchPublicTable('about_content', '*', { id: 'eq.1' }),
-    fetchPublicTable('contact_settings', '*', { id: 'eq.1' }),
-    fetchPublicTable('careers_jobs', '*', { status: 'eq.published', order: 'sort_order.asc,created_at.desc' }),
-    fetchPublicTable('careers_page_content', '*', { id: 'eq.1' }),
-  ]);
+  const tables = await publicSnapshot();
+  const { news, portfolios, products, service_content: serviceRows, service_landings: serviceLandings,
+    product_catalogue: catalogueRows, homepage_content: homepageRows, about_content: aboutRows,
+    contact_settings: contactRows, careers_jobs: careerJobs, careers_page_content: careersRows } = tables;
   if (requireNews && !homepageRows?.[0]) throw new Error('Homepage CMS wajib tersedia untuk build online.');
   if (requireNews && qwordsStaticOnly) {
     for (const [table, rows] of Object.entries({
@@ -206,18 +223,22 @@ async function main() {
     await waitForServer('http://127.0.0.1:4173/', server);
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
-    if (supabaseUrl) await page.route(`${supabaseUrl}/**`, (requestRoute) => {
-      const request = requestRoute.request();
-      // Build never writes analytics/observations or anything else to Supabase.
-      if (request.method() !== 'GET') return requestRoute.fulfill({ status: 204, body: '' });
+    await page.route('**/api/**', (route) => {
+      const request = route.request();
       const url = new URL(request.url());
+      if (request.method() !== 'GET' || !url.pathname.startsWith('/api/content/')) {
+        return route.fulfill({ status: 200, json: null });
+      }
       const table = url.pathname.split('/').at(-1);
       let rows = content.tables?.[table] ?? [];
-      for (const field of ['slug', 'id']) {
-        const filter = url.searchParams.get(field);
-        if (filter?.startsWith('eq.')) rows = rows.filter((row) => String(row[field]) === filter.slice(3));
+      const filters = JSON.parse(url.searchParams.get('filters') ?? '[]');
+      for (const [field, operator, value] of filters) {
+        if (operator === 'eq') rows = rows.filter((row) => String(row[field]) === String(value));
+        if (operator === 'not-null') rows = rows.filter((row) => row[field] != null);
       }
-      return requestRoute.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(rows) });
+      const offset = Number(url.searchParams.get('offset') ?? 0);
+      const limit = Number(url.searchParams.get('limit') ?? 200);
+      return route.fulfill({ status: 200, json: { rows: rows.slice(offset, offset + limit) } });
     });
     await page.addInitScript((origin) => { window.__VISITIGA_SITE_URL__ = origin; }, siteUrl);
     await page.addInitScript((allContent) => {
@@ -262,7 +283,6 @@ async function main() {
   await mkdir(join(distDir, 'admin'), { recursive: true });
   await writeFile(join(distDir, 'admin', 'index.html'), adminShell, 'utf8');
   await writeFile(join(distDir, 'portfolio-fallback.html'), appShell, 'utf8');
-  await writeFile(join(distDir, 'portfolio-edge-config.json'), JSON.stringify({ supabaseUrl, supabaseKey, siteUrl }), 'utf8');
   await writeFile(join(distDir, '_routes.json'), JSON.stringify({ version: 1, include: ['/api/*', '/sitemap.xml', '/news/*', '/portfolio/*', '/id/news/*', '/en/news/*', '/id/portfolio/*', '/en/portfolio/*'], exclude: [] }), 'utf8');
   await writeFile(join(distDir, 'sitemap.xml'), buildSitemap(STATIC_ROUTES, articles, siteUrl, content.portfolios ?? []), 'utf8');
   await writeFile(join(distDir, 'robots.txt'), `User-agent: *\nAllow: /\nDisallow: /admin\n\nSitemap: ${siteUrl}/sitemap.xml\n`, 'utf8');

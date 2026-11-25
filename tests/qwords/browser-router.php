@@ -5,10 +5,10 @@ require dirname(__DIR__, 2) . '/server/qwords/runtime.php';
 $root = dirname(__DIR__, 2) . '/artifacts/qwords/public_html';
 $private = dirname($root) . '/qwords-private';
 $build = json_decode(file_get_contents($private . '/build.json'), true);
-if (!$build['staging'] || !$build['offline'] || $build['supabase_url'] !== 'https://qwords-test.supabase.co') { http_response_code(503); exit('Testing artifact required'); }
+if (!$build['staging'] || !$build['offline'] || ($build['backend'] ?? '') !== 'mysql') { http_response_code(503); exit('Testing artifact required'); }
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 if (is_file($root . $path) && !str_ends_with($path, '.html') && !str_ends_with($path, '.php') && !str_starts_with($path, '/.')) return false;
-$config = ['site_url' => $build['site_url'], 'supabase_url' => $build['supabase_url'], 'supabase_publishable_key' => 'sb_publishable_test_only', 'staging' => true, 'legacy_redirects' => []];
+$config = ['site_url' => $build['site_url'], 'staging' => true, 'legacy_redirects' => []];
 $tables = json_decode(file_get_contents(__DIR__ . '/browser-data.json'), true);
 $http = static function ($url, $headers) use ($tables): array {
     parse_str(parse_url($url, PHP_URL_QUERY) ?? '', $query);
@@ -16,6 +16,9 @@ $http = static function ($url, $headers) use ($tables): array {
     $rows = $tables[$table] ?? [];
     if (isset($query['slug'])) $rows = array_values(array_filter($rows, static fn ($row) => 'eq.' . $row['slug'] === $query['slug']));
     return ['status' => 200, 'body' => json_encode($rows)];
+};
+$config['_read'] = static function ($table,$select,$filters) use ($http) {
+    return json_decode($http('https://fixture.example.test/' . $table . '?' . http_build_query($filters),[])['body'],true);
 };
 $request = ['uri' => $_SERVER['REQUEST_URI'], 'method' => $_SERVER['REQUEST_METHOD'], 'body' => file_get_contents('php://input'), 'authorization' => $_SERVER['HTTP_AUTHORIZATION'] ?? ''];
 $response = \Visitiga\Qwords\handle($request, $config, $build, file_get_contents($private . '/shell.html'), $root, $http);
