@@ -1,10 +1,10 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assertBuildEnvironment, assertNoSecrets, assertPublicKey, inlineScriptHashes } from '../../scripts/qwords-lib.mjs';
+import { assertBuildEnvironment, assertNoSecrets, assertPublicKey, inlineScriptHashes, legacyApps, renderHtaccess } from '../../scripts/qwords-lib.mjs';
 import { publicSupabaseHeaders } from '../../scripts/supabase-headers.mjs';
 
 test('public Supabase headers do not replace user JWT handling', () => {
@@ -26,10 +26,17 @@ test('CSP hashes emitted executable scripts and excludes data/external scripts',
   assert.equal(hashes.length, 1);
   assert.match(hashes[0], /^'sha256-[A-Za-z0-9+/]+=*'$/);
   assert.notDeepEqual(hashes, inlineScriptHashes('<script>console.log(2)</script>'));
+  const template = readFileSync(new URL('../../server/qwords/.htaccess', import.meta.url), 'utf8');
+  const rules = renderHtaccess(template, hashes, { supabase_url: 'https://data.example.test' });
+  assert.match(rules, /img-src [^;]+https:\/\/data\.example\.test;/);
+  assert.match(rules, /connect-src [^;]+https:\/\/data\.example\.test wss:\/\/data\.example\.test;/);
+  assert.throws(() => renderHtaccess(template, hashes, { supabase_url: 'https://data.example.test; unsafe' }));
 });
 const php = process.env.PHP_BINARY || 'php';
 const available = spawnSync(php, ['-v']).status === 0;
-test('PHP runtime regression checks', { skip: available ? false : 'PHP CLI unavailable; run on staging/CI' }, async (t) => {
+const required = process.env.QWORDS_REQUIRE_PHP === 'true';
+test('PHP runtime regression checks', { skip: available || required ? false : 'PHP CLI unavailable; run on staging/CI' }, async (t) => {
+  assert.ok(available, 'PHP runtime integration is required but PHP CLI is unavailable');
   const directory = mkdtempSync(join(tmpdir(), 'visitiga-qwords-'));
   try {
     const checks = JSON.parse(execFileSync(php, ['tests/qwords/runtime-check.php', directory], { encoding: 'utf8' }));
@@ -38,4 +45,9 @@ test('PHP runtime regression checks', { skip: available ? false : 'PHP CLI unava
     assert.ok(resolve(directory).startsWith(resolve(tmpdir(), 'visitiga-qwords-')));
     rmSync(directory, { recursive: true, force: true });
   }
+});
+test('legacy allowlist defaults closed and rejects reserved paths and regex fragments', () => {
+  assert.deepEqual(legacyApps(), []);
+  assert.deepEqual(legacyApps('uai, beta'), ['beta', 'uai']);
+  for (const value of ['backup', 'cgi-bin', 'beta,beta', 'beta|admin', '../lms']) assert.throws(() => legacyApps(value));
 });

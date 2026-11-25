@@ -1,22 +1,40 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { join, resolve, sep } from 'node:path';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { renderHtaccess } from '../../scripts/qwords-lib.mjs';
 
-const binary = process.env.QWORDS_APACHE_BINARY || (process.platform === 'win32' ? 'C:/xampp/apache/bin/httpd.exe' : '');
-const available = binary && existsSync(binary) && process.platform === 'win32';
-test('real Apache .htaccess and PHP integration (local XAMPP)', { skip: available ? false : 'Local Windows Apache/PHP unavailable; verify Apache/LiteSpeed on staging' }, async (t) => {
+const windows = process.platform === 'win32';
+const binary = process.env.QWORDS_APACHE_BINARY || (windows ? 'C:/xampp/apache/bin/httpd.exe' : '/usr/sbin/apache2');
+const available = existsSync(binary);
+const required = process.env.QWORDS_REQUIRE_APACHE === 'true';
+test('real Apache .htaccess and PHP integration', { skip: available || required ? false : 'Apache unavailable; server compatibility unverified' }, async (t) => {
+  assert.ok(available, 'Apache integration is required but the binary is unavailable');
   await mkdir('.qwords-test', { recursive: true });
   const directory = await mkdtemp(resolve('.qwords-test/apache-'));
   const publicRoot = join(directory, 'public_html');
   const path = (value) => value.replaceAll('\\', '/');
-  const apacheRoot = path(resolve(binary, '../..'));
+  const apacheRoot = windows ? path(resolve(binary, '../..')) : '/etc/apache2';
+  const moduleRoot = windows ? 'modules' : '/usr/lib/apache2/modules';
+  const phpModule = windows ? 'C:/xampp/php/php8apache2_4.dll' : process.env.QWORDS_APACHE_PHP_MODULE ||
+    join(moduleRoot, (await readdir(moduleRoot)).find((file) => /^libphp.*\.so$/.test(file)) || 'libphp.so');
   let child;
   try {
-    for (const name of ['id/about', 'id/news/current-news', 'admin', 'assets', '.git']) await mkdir(join(publicRoot, name), { recursive: true });
-    await cp('server/qwords/.htaccess', join(publicRoot, '.htaccess'));
+    for (const name of ['id/about', 'id/news/current-news', 'admin', 'assets', '.git', '.well-known/acme-challenge', 'beta', 'lms', 'backup', 'wp-content/uploads', 'wp-includes']) {
+      await mkdir(join(publicRoot, name), { recursive: true });
+    }
+    const template = await readFile('server/qwords/.htaccess', 'utf8');
+    await writeFile(join(publicRoot, '.htaccess'), renderHtaccess(template, [], { legacy_apps: [] }));
+    await writeFile(join(publicRoot, 'beta/.htaccess'), 'DirectoryIndex index.php\nRewriteEngine On\nRewriteRule ^deep/?$ index.php [L]\n');
+    await writeFile(join(publicRoot, 'lms/.htaccess'), 'RewriteEngine On\nRewriteRule ^deep/?$ index.php [L]\n');
+    for (const file of ['index.php', 'wp-login.php', 'beta/index.php', 'lms/index.php', 'wp-includes/legacy.php']) {
+      await writeFile(join(publicRoot, file), "<?php echo 'LEGACY PHP';");
+    }
+    await writeFile(join(publicRoot, 'backup/index.html'), 'BACKUP');
+    await writeFile(join(publicRoot, 'wp-content/uploads/old.pdf'), 'OLD MEDIA');
+    await writeFile(join(publicRoot, '.well-known/acme-challenge/Test_Token-1'), 'ACME');
     await writeFile(join(publicRoot, 'id/about/index.html'), '<h1>Static about</h1>'.repeat(100));
     await writeFile(join(publicRoot, 'id/news/current-news/index.html'), 'STALE MUST NEVER BE SERVED');
     await writeFile(join(publicRoot, 'admin/index.html'), '<h1>Admin login</h1>');
@@ -30,7 +48,7 @@ test('real Apache .htaccess and PHP integration (local XAMPP)', { skip: availabl
     await writeFile(join(publicRoot, 'assets/app-abcdefgh.js'), 'console.log("test");');
     await writeFile(join(publicRoot, '_qwords.php'), `<?php
 require '${path(resolve('server/qwords/runtime.php'))}';
-$config = ['site_url'=>'https://stage.example.test','supabase_url'=>'https://db.supabase.co','supabase_publishable_key'=>'sb_publishable_test_only','staging'=>false,'legacy_redirects'=>['/old-wordpress/'=>'/id/about/']];
+$config = ['site_url'=>'https://stage.example.test','supabase_url'=>'https://db.supabase.co','supabase_publishable_key'=>'sb_publishable_test_only','staging'=>false,'legacy_redirects'=>['/old-wordpress/'=>'/id/about/'],'migration_routes'=>[['source'=>'/index.php?p=42','target'=>'/id/about/','status'=>301,'evidence'=>'test fixture','preserve_query'=>['utm_source']]]];
 $build = ['site_url'=>$config['site_url'],'supabase_url'=>$config['supabase_url'],'staging'=>false,'static_routes'=>['/','/about']];
 $tables = json_decode(file_get_contents('${path(resolve('tests/qwords/browser-data.json'))}'),true);
 $http = static function($url,$headers) use($tables) { if(str_contains($url,'/auth/v1/user')) return ['status'=>200,'body'=>'{"id":"admin-1","app_metadata":{"role":"admin"}}']; parse_str(parse_url($url,PHP_URL_QUERY)??'', $query); $rows=$tables[basename(parse_url($url,PHP_URL_PATH))]??[]; if(isset($query['slug']) && $query['slug']!=='eq.test-news' && $query['slug']!=='eq.current-news') $rows=[]; if(isset($query['slug']) && $query['slug']==='eq.current-news' && $rows) $rows[0]['slug']='current-news'; return ['status'=>200,'body'=>json_encode($rows)]; };
@@ -42,17 +60,13 @@ Listen 127.0.0.1:4187
 ServerName 127.0.0.1
 PidFile "${path(join(directory, 'httpd.pid'))}"
 ErrorLog "${path(join(directory, 'error.log'))}"
-LoadModule authz_core_module modules/mod_authz_core.so
-LoadModule dir_module modules/mod_dir.so
-LoadModule mime_module modules/mod_mime.so
-LoadModule headers_module modules/mod_headers.so
-LoadModule rewrite_module modules/mod_rewrite.so
-LoadModule filter_module modules/mod_filter.so
-LoadModule deflate_module modules/mod_deflate.so
-LoadFile "C:/xampp/php/php8ts.dll"
-LoadModule php_module "C:/xampp/php/php8apache2_4.dll"
-PHPINIDir "C:/xampp/php"
-TypesConfig conf/mime.types
+${windows ? '' : `LoadModule mpm_prefork_module ${moduleRoot}/mod_mpm_prefork.so
+User www-data
+Group www-data`}
+${['authz_core', 'dir', 'mime', 'headers', 'rewrite', 'filter', 'deflate'].map((name) => `LoadModule ${name}_module ${moduleRoot}/mod_${name}.so`).join('\n')}
+${windows ? 'LoadFile "C:/xampp/php/php8ts.dll"\nPHPINIDir "C:/xampp/php"' : ''}
+LoadModule php_module "${path(phpModule)}"
+TypesConfig "${windows ? 'conf/mime.types' : '/etc/mime.types'}"
 DocumentRoot "${path(publicRoot)}"
 <Directory "${path(publicRoot)}">
   AllowOverride All
@@ -75,6 +89,28 @@ DocumentRoot "${path(publicRoot)}"
     }
     assert.ok(ready, 'Apache did not start');
     const get = (route, options = {}) => fetch(`http://127.0.0.1:4187${route}`, { redirect: 'manual', ...options });
+    await t.test('ACME, WordPress quarantine and child application rewrite precedence', async () => {
+      assert.equal(await (await get('/.well-known/acme-challenge/Test_Token-1')).text(), 'ACME');
+      assert.equal((await get('/.well-known/anything-else')).status, 403);
+      assert.equal((await get('/beta/deep')).status, 404);
+      assert.equal((await get('/beta/index.php')).status, 403);
+      for (const route of ['/wp-login.php', '/wp-includes/legacy.php', '/backup/index.html', '/_qwords.php'])
+        assert.equal((await get(route)).status, 403, route);
+      assert.equal((await get('/index.php?p=12')).status, 404);
+      const oldPost = await get('/index.php?p=42&utm_source=fixture');
+      assert.equal(oldPost.status, 301);
+      assert.equal(oldPost.headers.get('location'), '/id/about/?utm_source=fixture');
+      assert.equal((await get(oldPost.headers.get('location'))).status, 200);
+      assert.equal((await get('/wp-content/uploads/old.pdf')).status, 404);
+      await writeFile(join(publicRoot, '.htaccess'), renderHtaccess(template, [], { legacy_apps: ['beta'] }));
+      for (const route of ['/beta/', '/beta/deep', '/beta/index.php']) {
+        const response = await get(route);
+        assert.equal(response.status, 200, route);
+        assert.equal(await response.text(), 'LEGACY PHP');
+        assert.equal(response.headers.get('content-security-policy'), null);
+      }
+      assert.equal((await get('/lms/deep')).status, 404);
+    });
     await t.test('prerender, canonical redirect and gzip', async () => {
       const response = await get('/id/about/', { headers: { 'Accept-Encoding': 'gzip' } });
       assert.equal(response.status, 200);
@@ -140,7 +176,7 @@ DocumentRoot "${path(publicRoot)}"
       child.kill();
       await new Promise((done) => child.once('exit', done));
     }
-    assert.ok(directory.startsWith(resolve('.qwords-test') + '\\') || directory.startsWith(resolve('.qwords-test') + '/'));
+    assert.ok(directory.startsWith(resolve('.qwords-test') + sep));
     await rm(directory, { recursive: true, force: true });
   }
 });

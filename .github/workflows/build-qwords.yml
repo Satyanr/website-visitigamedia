@@ -2,36 +2,125 @@ name: Build Qwords artifact (no deployment)
 on:
   workflow_dispatch:
     inputs:
-      site_url:
-        description: 'HTTPS staging origin (no path)'
+      mode:
+        type: choice
+        options: [staging, production]
+        default: staging
         required: true
+      site_url:
+        description: HTTPS staging origin (required for staging)
+        type: string
+      production_approval:
+        description: Enter BUILD PRODUCTION to request approval for a production artifact
         type: string
 permissions:
   contents: read
 jobs:
-  artifact:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+  inputs:
+    runs-on: ubuntu-24.04
     env:
-      VITE_SITE_URL: ${{ inputs.site_url }}
-      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
-      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
-      QWORDS_STAGING: 'true'
+      MODE: ${{ inputs.mode }}
+      SITE_URL: ${{ inputs.site_url }}
+      APPROVAL: ${{ inputs.production_approval }}
+    steps:
+      - run: |
+          if [[ "$MODE" == production ]]; then
+            [[ "$GITHUB_REF" == refs/heads/main && "$APPROVAL" == "BUILD PRODUCTION" ]]
+          else
+            [[ "$MODE" == staging && "$SITE_URL" =~ ^https://[a-zA-Z0-9.-]+(:[0-9]+)?$ ]]
+          fi
+  php:
+    needs: inputs
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.3', '8.4']
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: curl, openssl, mbstring, dom, json, libxml, zip
+          coverage: none
+      - run: |
+          php -r 'foreach (["curl","openssl","mbstring","dom","json","libxml","zip"] as $ext) if (!extension_loaded($ext)) { fwrite(STDERR, "Missing extension: $ext\n"); exit(1); }'
+          find server/qwords tests/qwords scripts -name '*.php' -print0 | xargs -0 -n 1 php -l
+          node --test tests/qwords/runtime.test.mjs
+        env:
+          QWORDS_REQUIRE_PHP: 'true'
+  artifact:
+    needs: [inputs, php]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    environment: qwords-${{ inputs.mode }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+      - name: Check environment configuration
+        env:
+          MODE: ${{ inputs.mode }}
+          APPROVAL_GATE: ${{ secrets.QWORDS_PRODUCTION_APPROVAL_GATE }}
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          [[ -n "$VITE_SUPABASE_URL" && -n "$VITE_SUPABASE_PUBLISHABLE_KEY" ]] || { echo 'Configure authorized Supabase settings in the selected environment.'; exit 1; }
+          if [[ "$MODE" == production && -z "$APPROVAL_GATE" ]]; then
+            echo 'Protected qwords-production approval environment is required.'
+            exit 1
+          fi
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: sudo apt-get update && sudo apt-get install -y php-cli php-curl php-xml php-mbstring
+      - run: sudo apt-get update && sudo apt-get install -y apache2 libapache2-mod-php php-cli php-curl php-xml php-mbstring php-zip
       - run: npm run lint && npm run typecheck && npm test && npm run test:qwords
-      - run: npm run build:qwords && npm run package:qwords
-      - run: cd artifacts && zip -r qwords-staging.zip qwords
+        env:
+          QWORDS_REQUIRE_APACHE: 'true'
+          QWORDS_REQUIRE_PHP: 'true'
+      - name: Verify test site with isolated fixtures
+        env:
+          VITE_SITE_URL: https://qwords-stage.example.test
+          VITE_SUPABASE_URL: https://qwords-test.supabase.co
+          VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_test_only
+          QWORDS_STAGING: 'true'
+          QWORDS_ALLOW_OFFLINE: 'true'
+          BUILD_OUTPUT_DIR: dist-qwords
+        run: |
+          npm run build:qwords
+          npm run package:qwords
+          npm run verify:qwords -- artifacts/qwords-staging.zip
+          npm run budget
+          npx playwright test --config playwright.qwords.config.ts
+      - name: Build and verify authorized online artifact
+        env:
+          QWORDS_STAGING: ${{ inputs.mode == 'staging' && 'true' || 'false' }}
+          QWORDS_ALLOW_OFFLINE: 'false'
+          QWORDS_LEGACY_APPS: ${{ vars.QWORDS_LEGACY_APPS }}
+          VITE_SITE_URL: ${{ inputs.mode == 'production' && 'https://visitigamedia.com' || inputs.site_url }}
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          BUILD_OUTPUT_DIR: dist-qwords
+          MODE: ${{ inputs.mode }}
+        run: |
+          npm run build:qwords
+          npm run budget
+          npm run package:qwords
+          npm run verify:qwords -- "artifacts/qwords-$MODE.zip"
+          cat "artifacts/qwords-$MODE.zip.report.json" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: qwords-staging
-          path: artifacts/qwords-staging.zip
-          include-hidden-files: true
+          name: qwords-${{ inputs.mode }}
+          path: |
+            artifacts/qwords-${{ inputs.mode }}.zip
+            artifacts/qwords-${{ inputs.mode }}.zip.report.json
+          if-no-files-found: error
           retention-days: 7

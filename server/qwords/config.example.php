@@ -7,7 +7,6 @@ return [
     'deepl_auth_key' => '', // Server only; empty disables translation with HTTP 503.
     'staging' => true, // Must match QWORDS_STAGING at build time.
     'https_verified' => false, // Enable HSTS only after HTTPS is confirmed.
-    // Exact old WordPress path => current LOCAL canonical path. Empty until audited.
-    // Example format only: '/verified-old-path/' => '/id/news/verified-current-slug/',
-    'legacy_redirects' => [],
+    // Paste records validated by npm run validate:qwords-redirects. See migration runbook.
+    'migration_routes' => [],
 ];

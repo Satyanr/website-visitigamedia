@@ -13,12 +13,13 @@ const js = await gzipBytes(script);
 const css = await gzipBytes(stylesheet);
 const hero = (await stat(join(dist, 'hero-640.webp'))).size;
 const assets = await readdir(join(dist, 'assets'));
-const logoName = assets.find((name) => /^logo-visitiga-.*\.webp$/.test(name));
-const logo = logoName ? (await stat(join(dist, 'assets', logoName))).size : 0;
+const logoName = assets.find((name) => /^logo-visitiga-horizontal-[A-Za-z0-9_-]+\.webp$/.test(name));
+if (!logoName) throw new Error('Aset logo navbar tidak ditemukan pada build.');
+const logo = (await stat(join(dist, 'assets', logoName))).size;
 const total = js + css + hero + logo;
 const budgets = [
   ['initial JavaScript gzip', js, 125 * 1024], ['CSS gzip', css, 22 * 1024],
-  ['mobile hero', hero, 60 * 1024], ['initial transfer', total, 220 * 1024],
+  ['mobile hero', hero, 60 * 1024], ['initial transfer (JS, CSS, hero dan logo)', total, 220 * 1024],
 ];
 let failed = false;
 for (const [label, value, maximum] of budgets) {

@@ -11,6 +11,8 @@
     "build": "npm run build:app && node scripts/prerender.mjs",
     "build:qwords": "node scripts/build-qwords.mjs",
     "package:qwords": "node scripts/package-qwords.mjs",
+    "verify:qwords": "php scripts/qwords-zip.php verify",
+    "validate:qwords-redirects": "php scripts/validate-qwords-redirects.php",
     "test:qwords": "node --test tests/qwords/*.test.mjs",
     "budget": "node scripts/check-performance-budget.mjs",
     "test:e2e": "playwright test",

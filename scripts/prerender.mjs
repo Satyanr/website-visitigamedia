@@ -20,6 +20,7 @@ if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(siteUrl)) {
 const supabaseUrl = env.VITE_SUPABASE_URL?.replace(/\/$/, '');
 const supabaseKey = env.VITE_SUPABASE_PUBLISHABLE_KEY;
 const requireNews = env.SEO_REQUIRE_NEWS === 'true';
+const qwordsStaticOnly = env.QWORDS_STATIC_ONLY === 'true';
 
 async function fetchPublicTable(table, select = '*', filters = {}) {
   if (!supabaseUrl || !supabaseKey) {
@@ -35,7 +36,9 @@ async function fetchPublicTable(table, select = '*', filters = {}) {
     console.warn(`[seo] ${message}`);
     return null;
   }
-  return response.json();
+  const rows = await response.json();
+  if (!Array.isArray(rows)) throw new Error(`Respons CMS tidak valid untuk ${table}.`);
+  return rows;
 }
 
 async function getBuildContent() {
@@ -59,6 +62,17 @@ async function getBuildContent() {
     fetchPublicTable('careers_page_content', '*', { id: 'eq.1' }),
   ]);
   if (requireNews && !homepageRows?.[0]) throw new Error('Homepage CMS wajib tersedia untuk build online.');
+  if (requireNews && qwordsStaticOnly) {
+    for (const [table, rows] of Object.entries({
+      service_content: serviceRows, product_catalogue: catalogueRows, about_content: aboutRows,
+      contact_settings: contactRows, careers_page_content: careersRows,
+    })) if (!rows?.[0]) throw new Error(`Baris konfigurasi publik CMS belum tersedia: ${table}.`);
+    for (const path of STATIC_ROUTES.filter((route) => route.startsWith('/services/'))) {
+      if (!serviceLandings.some(({ slug }) => slug === path.split('/').at(-1))) {
+        throw new Error(`Landing CMS belum tersedia: ${path}.`);
+      }
+    }
+  }
   return {
     news: news ?? [], portfolios, products,
     serviceContent: serviceRows?.[0] ?? null,
@@ -165,7 +179,8 @@ async function validateOutput(routes) {
   for (const path of routes) {
     const output = path === '/' ? join(distDir, 'index.html') : join(distDir, path.slice(1), 'index.html');
     const html = await readFile(output, 'utf8');
-    const required = ['<title>', 'name="description"', 'rel="canonical"', 'property="og:title"', 'application/ld+json', '<h1'];
+    const required = ['<title>', 'name="description"', 'rel="canonical"', 'property="og:title"', 'name="twitter:card"',
+      'hreflang="id"', 'hreflang="en"', 'hreflang="x-default"', 'application/ld+json', '<h1'];
     for (const marker of required) if (!html.includes(marker)) throw new Error(`${output} tidak memiliki ${marker}.`);
     if (!html.includes(`${siteUrl}${canonicalRoute(path)}`)) throw new Error(`${output} memiliki canonical yang salah.`);
     if (html.includes('Memuat berita…') || html.includes('Loading news…')) throw new Error(`${output} masih berisi placeholder pemuatan.`);
@@ -182,7 +197,7 @@ async function main() {
   const articleRoutes = articles.map(({ slug }) => `/news/${slug}`);
   if (content.portfolios?.some(({ slug }) => !slug)) throw new Error('Migrasi slug portofolio belum diterapkan di Supabase. Jalankan migrasi sebelum build/deploy.');
   const portfolioRoutes = (content.portfolios ?? []).map(({ slug }) => `/portfolio/${slug}`);
-  const baseRoutes = [...STATIC_ROUTES, ...articleRoutes, ...portfolioRoutes];
+  const baseRoutes = qwordsStaticOnly ? STATIC_ROUTES : [...STATIC_ROUTES, ...articleRoutes, ...portfolioRoutes];
   const routes = baseRoutes.flatMap((path) => SEO_LANGUAGES.map((language) => localizedRoute(path, language)));
   const viteBin = join(projectRoot, 'node_modules', 'vite', 'bin', 'vite.js');
   const server = spawn(process.execPath, [viteBin, 'preview', '--outDir', distDir, '--host', '127.0.0.1', '--port', '4173', '--strictPort'], { stdio: 'inherit' });
@@ -235,7 +250,7 @@ async function main() {
     }
     await snapshot(page, '/id/__not-found', content, join(distDir, '404.html'));
     console.log('[seo] prerendered 404');
-    await writeFile(join(distDir, '_redirects'), buildRedirects(articles), 'utf8');
+    if (!qwordsStaticOnly) await writeFile(join(distDir, '_redirects'), buildRedirects(articles), 'utf8');
   } finally {
     await browser?.close();
     await stopServer(server);

@@ -51,16 +51,12 @@ function validate_config(array $config, array $build): void
         if (!origin_valid($config[$name] ?? '') || ($config[$name] ?? '') !== ($build[$name] ?? '')) throw new RuntimeException('Build configuration mismatch');
     }
     if (!public_key_valid($config['supabase_publishable_key'] ?? '')) throw new RuntimeException('A public Supabase key is required');
+    if (isset($build['public_key_sha256']) && !hash_equals($build['public_key_sha256'], hash('sha256', $config['supabase_publishable_key']))) throw new RuntimeException('Build public key mismatch');
     if (($config['staging'] ?? true) !== ($build['staging'] ?? true)) throw new RuntimeException('Staging configuration mismatch');
-    foreach ($config['legacy_redirects'] ?? [] as $from => $to) {
-        if (!is_string($from) || !is_string($to) || !preg_match('~^/[^\s?#\\\\]*$~D', $from)
-            || !preg_match('~^/(?:id|en)/(?:[a-z0-9-]+/)*$~D', $to) || $from === $to
-            || array_key_exists($to, $config['legacy_redirects'])) throw new RuntimeException('Invalid legacy redirect');
-    }
 }
 
 /** Fixed server-side destinations only. No redirects; bounded TLS requests. */
-function http_request(string $url, array $headers, string $method = 'GET', ?string $body = null): array
+function http_request(string $url, array $headers, string $method = 'GET', ?string $body = null, int $timeout = 12000): array
 {
     $handle = curl_init($url);
     if ($handle === false) throw new RuntimeException('Upstream unavailable');
@@ -69,8 +65,8 @@ function http_request(string $url, array $headers, string $method = 'GET', ?stri
     $responseBody = '';
     curl_setopt_array($handle, [
         CURLOPT_HTTPHEADER => $lines, CURLOPT_CUSTOMREQUEST => $method,
-        CURLOPT_CONNECTTIMEOUT => 3, CURLOPT_TIMEOUT => 12,
-        CURLOPT_FOLLOWLOCATION => false, CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
+        CURLOPT_CONNECTTIMEOUT_MS => min(3000, $timeout), CURLOPT_TIMEOUT_MS => $timeout,
+        CURLOPT_FOLLOWLOCATION => false,
         CURLOPT_SSL_VERIFYPEER => true, CURLOPT_SSL_VERIFYHOST => 2,
         CURLOPT_WRITEFUNCTION => static function ($curl, string $chunk) use (&$responseBody): int {
             if (strlen($responseBody) + strlen($chunk) > 8 * 1024 * 1024) return 0;
@@ -78,10 +74,11 @@ function http_request(string $url, array $headers, string $method = 'GET', ?stri
             return strlen($chunk);
         },
     ]);
+    if (defined('CURLOPT_PROTOCOLS_STR')) curl_setopt($handle, CURLOPT_PROTOCOLS_STR, 'https');
+    else curl_setopt($handle, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
     if ($body !== null) curl_setopt($handle, CURLOPT_POSTFIELDS, $body);
     $ok = curl_exec($handle);
     $status = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
-    curl_close($handle);
     if ($ok === false || $status === 0) throw new RuntimeException('Upstream unavailable');
     return ['status' => $status, 'body' => $responseBody];
 }
@@ -137,6 +134,90 @@ function json_result(int $status, array $body, array $headers = []): array
 function redirect(string $target): array
 {
     return result(301, '', 'text/plain; charset=utf-8', ['Location' => $target]);
+}
+
+function request_path(string $raw): ?string
+{
+    if (preg_match('~%(?:2f|5c)|%(?![0-9a-f]{2})~i', $raw)) return null;
+    $path = rawurldecode($raw);
+    if (!str_starts_with($path, '/') || str_contains($path, '\\') || str_contains($path, '//')
+        || preg_match('~(?:^|/)\.|[\x00-\x1f\x7f?#%]~', $path)) return null;
+    return $path;
+}
+
+function migration_query(string $raw): array
+{
+    $query = [];
+    foreach (explode('&', $raw) as $pair) {
+        [$key, $value] = array_pad(explode('=', $pair, 2), 2, '');
+        $query[urldecode($key)][] = urldecode($value);
+    }
+    return $query;
+}
+
+function migration_media(string $path): bool
+{
+    return preg_match('~^/(?:(?:installation-icons|news|portfolio|products|videos)/[^?]+|(?:hero-(?:640|960|1600)|installation-area-map|social-preview|video-cover|visitiga-media-logo))\.(?:png|jpe?g|gif|webp|avif|svg|ico|mp4|webm|pdf)$~iD', $path) === 1;
+}
+
+/** Compile a private, inventory-derived mapping. Used by the CLI validator too. */
+function migration_routes(array $rows, array $build, string $publicRoot): array
+{
+    if (!array_is_list($rows) || count($rows) > 10000) throw new RuntimeException('Invalid migration inventory');
+    $routes = [];
+    $canonical = [];
+    foreach ($build['static_routes'] as $route) foreach (['id', 'en'] as $lang) {
+        $canonical['/' . $lang . rtrim($route, '/') . '/'] = true;
+    }
+    foreach ($rows as $index => $row) {
+        $error = 'Invalid migration row ' . ($index + 1);
+        if (!is_array($row) || !is_string($row['source'] ?? null) || !is_string($row['evidence'] ?? null)
+            || trim($row['evidence']) === '') throw new RuntimeException($error);
+        [$raw, $query] = array_pad(explode('?', $row['source'], 2), 2, '');
+        $source = request_path($raw);
+        $prefix = explode('/', (string) $source)[1] ?? '';
+        if ($source === null || strlen($raw) > 2048 || in_array($prefix, $build['legacy_apps'] ?? [], true)
+            || preg_match('~^/(?:id|en|admin|api|assets|cgi-bin|backup[^/]*|wp-admin|wp-includes|qwords-private|src|server|scripts|supabase|node_modules|functions|vendor)(?:/|$)~i', $source)
+            || ($source !== '/index.php' && preg_match('~\.(?:php[0-9]*|phps|phtml|phar|cgi|pl|asp|aspx|shtml|sql|zip|gz|log|map|ini|bak|old|orig|ya?ml|tar|7z)(?:[./]|$)|\x7e$~iD', $source))
+            || in_array($source, ['/robots.txt', '/sitemap.xml'], true) || migration_media($source)
+            || (($source === '/' || $source === '/index.php') && $query === '')) throw new RuntimeException($error);
+        if ($query !== '' && (!in_array($source, ['/', '/index.php'], true)
+            || !preg_match('/^(?:p|page_id|attachment_id)=[1-9][0-9]{0,17}$/D', $query))) throw new RuntimeException($error);
+        $target = $row['target'] ?? null;
+        $status = $row['status'] ?? null;
+        $keep = $row['preserve_query'] ?? [];
+        if (!is_array($keep) || !array_is_list($keep)) throw new RuntimeException($error);
+        foreach ($keep as $param) if (!in_array($param, ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'], true)) throw new RuntimeException($error);
+        if ($status === 301) {
+            if (!is_string($target) || request_path($target) === null ||
+                !(isset($canonical[$target]) || preg_match('~^/(?:id|en)/(?:news|portfolio)/[a-z0-9]+(?:-[a-z0-9]+)*/$~D', $target)
+                    || (migration_media(rawurldecode($target)) && is_file($publicRoot . rawurldecode($target))))) throw new RuntimeException($error);
+            $target = implode('/', array_map('rawurlencode', explode('/', rawurldecode($target))));
+        } elseif (!in_array($status, [404, 410], true) || $target !== null || $keep) throw new RuntimeException($error);
+        if (isset($routes[$source][$query])) throw new RuntimeException($error . ' (duplicate source)');
+        $routes[$source][$query] = ['target' => $target, 'status' => $status, 'preserve_query' => $keep];
+    }
+    foreach ($routes as $variants) foreach ($variants as $row) {
+        if (isset($routes[rawurldecode($row['target'] ?? '')][''])) throw new RuntimeException('Migration redirect chain or loop');
+    }
+    return $routes;
+}
+
+function migration_response(array $row, array $query, callable $resolveDetail): array
+{
+    if ($row['status'] !== 301) return result($row['status'], 'Content not found', 'text/plain; charset=utf-8', ['X-Robots-Tag' => 'noindex']);
+    $target = $row['target'];
+    if (preg_match('~^/(id|en)/(news|portfolio)/([^/]+)/$~D', $target, $match)) {
+        $detail = $resolveDetail($match[1], $match[2], $match[3]);
+        if ($detail['status'] === 301) $target = $detail['headers']['Location'];
+        elseif ($detail['status'] !== 200) return $detail;
+    }
+    $kept = [];
+    foreach ($row['preserve_query'] as $key) {
+        $values = $query[$key] ?? [];
+        if (count($values) === 1 && strlen($values[0]) <= 256) $kept[$key] = $values[0];
+    }
+    return redirect($target . ($kept ? '?' . http_build_query($kept, '', '&', PHP_QUERY_RFC3986) : ''));
 }
 
 function plain(string $value): string
@@ -258,11 +339,13 @@ function render_document(string $shell, array $row, string $kind, string $locale
 function detail(array $config, callable $http, string $shell, string $locale, string $kind, string $slug): array
 {
     if (!slug_valid($slug)) return result(404, 'Not found', 'text/plain; charset=utf-8', ['X-Robots-Tag' => 'noindex']);
-    $row = query_one($config, $http, $kind === 'news' ? 'news' : 'portfolios', 'slug', $slug);
+    $row = $kind === 'news'
+        ? query($config, $http, 'news', '*', ['slug' => 'eq.' . $slug, 'published_at' => 'not.is.null', 'limit' => '1'])[0] ?? null
+        : query_one($config, $http, 'portfolios', 'slug', $slug);
     if ($kind === 'portfolio' && !$row) {
         $alias = query_one($config, $http, 'portfolio_slug_aliases', 'old_slug', $slug);
         if ($alias && preg_match('/^[a-f0-9-]{36}$/iD', $alias['portfolio_id'] ?? '')) $row = query_one($config, $http, 'portfolios', 'id', $alias['portfolio_id']);
-        if ($row && slug_valid($row['slug'] ?? '')) return redirect('/' . $locale . '/portfolio/' . $row['slug'] . '/');
+        if ($row && slug_valid($row['slug'] ?? '') && $row['slug'] !== $slug) return redirect('/' . $locale . '/portfolio/' . $row['slug'] . '/');
     }
     if (!$row || ($kind === 'news' && empty($row['published_at']))) return result(404, 'Content not found', 'text/plain; charset=utf-8', ['X-Robots-Tag' => 'noindex']);
     if (!slug_valid($row['slug'] ?? '') || $row['slug'] !== $slug) throw new RuntimeException('Invalid record identity');
@@ -278,6 +361,7 @@ function sitemap(array $config, array $build, callable $http): array
         if (!slug_valid($row['slug'] ?? '')) throw new RuntimeException('Invalid sitemap slug');
         $routes[] = ['path' => '/' . $kind . '/' . $row['slug'], 'lastmod' => $row['updated_at'] ?? $row['published_at'] ?? null];
     }
+    if (count($routes) > 25000) throw new RuntimeException('Sitemap needs multiple files');
     $xml = '<?xml version="1.0" encoding="UTF-8"?>' . "\n" . '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">';
     foreach ($routes as $entry) foreach (['id', 'en'] as $locale) {
         $path = $entry['path'] === '/' ? '/' : rtrim($entry['path'], '/') . '/';
@@ -377,22 +461,46 @@ function handle(array $request, array $config, array $build, string $shell, stri
 {
     try {
         validate_config($config, $build);
-        $path = rawurldecode(explode('?', $request['uri'], 2)[0]);
-        if (!str_starts_with($path, '/') || str_contains($path, '\\') || str_contains($path, '//') || preg_match('~(?:^|/)\.|[\x00-\x20\x7f]~', $path)) return result(404, 'Not found');
+        [$rawPath, $rawQuery] = array_pad(explode('?', $request['uri'], 2), 2, '');
+        $path = request_path($rawPath);
+        if ($path === null) return result(404, 'Not found');
         if ($path === '/api/translate-content' || $path === '/api/translate-content/') return translate($request, $config, $http);
         if (!in_array($request['method'], ['GET', 'HEAD'], true)) return result(405, 'Method not allowed', 'text/plain', ['Allow' => 'GET, HEAD']);
-        if (isset($config['legacy_redirects'][$path])) return redirect($config['legacy_redirects'][$path]);
+        $resolveDetail = static fn ($locale, $kind, $slug) => detail($config, $http, $shell, $locale, $kind, $slug);
+        $mappings = $config['migration_routes'] ?? [];
+        foreach ($config['legacy_redirects'] ?? [] as $from => $to) {
+            $mappings[] = ['source' => $from, 'target' => $to, 'status' => 301, 'evidence' => 'existing private mapping'];
+        }
+        if ($mappings && !preg_match('~^/(?:id|en|admin|api)(?:/|$)~', $path) && !in_array($path, ['/robots.txt', '/sitemap.xml'], true)) {
+            $routes = migration_routes($mappings, $build, $publicRoot)[$path] ?? [];
+            $query = migration_query($rawQuery);
+            foreach (['p', 'page_id', 'attachment_id'] as $key) {
+                if (count($query[$key] ?? []) !== 1 || !isset($routes[$key . '=' . $query[$key][0]])) continue;
+                if (count(array_intersect(['p', 'page_id', 'attachment_id'], array_keys($query))) !== 1) break;
+                return migration_response($routes[$key . '=' . $query[$key][0]], $query, $resolveDetail);
+            }
+            if (isset($routes[''])) return migration_response($routes[''], $query, $resolveDetail);
+        }
         if ($path === '/robots.txt') return result(200, ($config['staging'] ? "User-agent: *\nDisallow: /\n" : "User-agent: *\nAllow: /\nDisallow: /admin\n\nSitemap: " . $config['site_url'] . "/sitemap.xml\n"), 'text/plain; charset=utf-8');
         if ($path === '/sitemap.xml') return sitemap($config, $build, $http);
-        if ($path === '/' || $path === '/index.html') return redirect('/en/');
+        if ($path === '/' || $path === '/index.php') {
+            if ($path === '/index.php' || array_intersect(['p', 'page_id', 'attachment_id'], array_keys(migration_query($rawQuery)))) {
+                return result(404, 'Not found', 'text/plain; charset=utf-8', ['X-Robots-Tag' => 'noindex']);
+            }
+            return redirect('/en/');
+        }
+        if ($path === '/index.html') return redirect('/en/');
         if (preg_match('~^/(id|en)/(news|portfolio)/([^/]+)/?$~D', $path, $matches)) {
             if (!slug_valid($matches[3])) return result(404, 'Not found');
             // Confirm existence before adding slash: missing content stays a 404.
-            $response = detail($config, $http, $shell, $matches[1], $matches[2], $matches[3]);
+            $response = $resolveDetail($matches[1], $matches[2], $matches[3]);
             if ($response['status'] === 200 && !str_ends_with($path, '/')) return redirect($path . '/');
             return $response;
         }
-        if (preg_match('~^/(news|portfolio)/([a-z0-9-]+)/?$~D', $path, $matches) && slug_valid($matches[2])) return redirect('/en/' . $matches[1] . '/' . $matches[2] . '/');
+        if (preg_match('~^/(news|portfolio)/([a-z0-9-]+)/?$~D', $path, $matches) && slug_valid($matches[2])) {
+            $response = $resolveDetail('en', $matches[1], $matches[2]);
+            return $response['status'] === 200 ? redirect('/en/' . $matches[1] . '/' . $matches[2] . '/') : $response;
+        }
         if (preg_match('~^/admin(?:/|$)~', $path)) {
             $html = file_get_contents($publicRoot . '/admin/index.html');
             if ($html === false) throw new RuntimeException('Missing admin shell');
@@ -430,10 +538,16 @@ function run(string $publicRoot): void
         $request = ['uri' => $_SERVER['REQUEST_URI'] ?? '/', 'method' => $_SERVER['REQUEST_METHOD'] ?? 'GET',
             'authorization' => authorization_header($_SERVER, function_exists('getallheaders') ? getallheaders() : []),
             'content_length' => $_SERVER['CONTENT_LENGTH'] ?? 0, 'body' => $body ?: ''];
-        $response = handle($request, $config, $build, $shell, $publicRoot, __NAMESPACE__ . '\\http_request');
+        $deadline = hrtime(true) + 20_000_000_000;
+        $http = static function ($url, $headers, $method = 'GET', $body = null) use ($deadline): array {
+            $remaining = (int) floor(($deadline - hrtime(true)) / 1_000_000);
+            if ($remaining < 1) throw new RuntimeException('Upstream deadline exceeded');
+            return http_request($url, $headers, $method, $body, min(12000, $remaining));
+        };
+        $response = handle($request, $config, $build, $shell, $publicRoot, $http);
         if ($config['staging'] ?? true) $response['headers']['X-Robots-Tag'] = 'noindex, nofollow';
         // Trust the web server's HTTPS flag only, never user-supplied proxy headers.
-        if (($config['https_verified'] ?? false) && ($_SERVER['HTTPS'] ?? '') === 'on') $response['headers']['Strict-Transport-Security'] = 'max-age=31536000';
+        if (($config['https_verified'] ?? false) && in_array(strtolower($_SERVER['HTTPS'] ?? ''), ['on', '1'], true)) $response['headers']['Strict-Transport-Security'] = 'max-age=31536000';
     } catch (Throwable) {
         $response = result(503, 'Application configuration unavailable', 'text/plain; charset=utf-8', ['X-Robots-Tag' => 'noindex']);
     }

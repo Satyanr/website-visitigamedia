@@ -24,6 +24,30 @@ export function assertBuildEnvironment(env) {
   if (env.VITE_SUPABASE_PUBLISHABLE_KEY) assertPublicKey(env.VITE_SUPABASE_PUBLISHABLE_KEY);
 }
 
+export function legacyApps(value = '') {
+  const apps = value === '' ? [] : value.split(',').map((app) => app.trim());
+  const candidates = ['beta', 'brochure', 'info', 'lms', 'smart-classroom', 'uai'];
+  if (apps.some((app) => !candidates.includes(app)) || new Set(apps).size !== apps.length) {
+    throw new Error('QWORDS_LEGACY_APPS harus berisi nama folder kandidat yang terverifikasi, tanpa duplikat.');
+  }
+  return apps.sort();
+}
+
+export function renderHtaccess(template, hashes, build) {
+  const apps = legacyApps((build.legacy_apps ?? []).join(',')).join('|') || '(?!)';
+  const scope = `"expr=%{REQUEST_URI} !~ m#^/(?:(?:${apps})(?:/|$)|\\.well-known/acme-challenge/)#"`;
+  const supabase = build.supabase_url;
+  if (supabase && !/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(supabase)) throw new Error('Origin Supabase tidak valid untuk CSP.');
+  const headers = supabase ? template.replace(/\b(img-src|media-src|connect-src) ([^;]*);/g, (_, directive, sources) => {
+    const realtime = directive === 'connect-src' ? ` ${supabase.replace(/^https:/i, 'wss:')}` : '';
+    return `${directive} ${sources} ${supabase}${realtime};`;
+  }) : template;
+  return headers.replaceAll('__QWORDS_LEGACY_APPS__(?!)', apps)
+    .replace(/script-src 'self'[^;]*;/, `script-src 'self' ${hashes.join(' ')};`)
+    .replace(/^([ \t]+Header (?:always )?set .+)$/gm, `$1 ${scope}`)
+    + (build.staging ? '\n<IfModule mod_headers.c>\n  Header always set X-Robots-Tag "noindex, nofollow"\n</IfModule>\n' : '');
+}
+
 export function assertNoSecrets(text, secrets = []) {
   if (/sb_secret_[A-Za-z0-9_-]+/.test(text)) throw new Error('Privileged key ditemukan pada artifact.');
   for (const token of text.match(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g) ?? []) {

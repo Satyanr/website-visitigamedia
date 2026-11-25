@@ -1,4 +1,4 @@
-import logoUrl from '@/assets/logo-visitiga.png';
+import logoUrl from '@/assets/logo-visitiga-horizontal.webp';
 
 interface LogoProps {
   className?: string;

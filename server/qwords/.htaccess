@@ -1,27 +1,42 @@
 Options -Indexes -MultiViews
-DirectoryIndex index.html
-ErrorDocument 404 /404.html
 
-# Requires mod_rewrite / LiteSpeed equivalent and AllowOverride FileInfo Options.
+# Parent rules run before a child's own rewrites. Exemptions fall through to
+# the child without END or an internal redirect into the React application.
 RewriteEngine On
+RewriteOptions InheritDownBefore
 # Preserve the Supabase session JWT for PHP/FastCGI.
 RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 
-# Refuse secrets, source, archives and internal build/Cloudflare files.
-RewriteRule (^|/)\.(?!well-known(?:/|$)) - [F,END]
-RewriteRule ^(?:qwords-private|src|server|scripts|supabase|node_modules|functions|vendor)(?:/|$) - [F,END,NC]
-RewriteRule (?:\.(?:map|sql|log|bak|old|orig|ini|ya?ml|zip|tar|gz|7z)|~)$ - [F,END,NC]
-RewriteRule ^(?:package(?:-lock)?\.json|composer\.(?:json|lock)|portfolio-(?:fallback\.html|edge-config\.json)|_redirects|_headers|_routes\.json)$ - [F,END,NC]
+RewriteCond %{REQUEST_URI} ^/\.well-known(?:/|$)
+RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/[A-Za-z0-9_-]+$
+RewriteRule ^ - [F,END]
+RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/[A-Za-z0-9_-]+$
+RewriteCond %{REQUEST_URI} /(?:\.|(?:backup(?:[-_][^/]*)?|cgi-bin|qwords-private)(?:/|$)) [NC]
+RewriteRule ^ - [F,END]
+RewriteCond %{REQUEST_URI} (?:\.(?:map|sql|log|bak|old|orig|ini|ya?ml|zip|tar|gz|7z)(?:/|$)|~$) [NC]
+RewriteRule ^ - [F,END]
+RewriteCond %{REQUEST_URI} ^/(?:src|server|scripts|supabase|node_modules|functions|vendor)(?:/|$) [NC,OR]
+RewriteCond %{REQUEST_URI} /(?:package(?:-lock)?\.json|composer\.(?:json|lock)|portfolio-(?:fallback\.html|edge-config\.json)|_redirects|_headers|_routes\.json)$ [NC]
+RewriteRule ^ - [F,END]
 
-# Run BEFORE -f/-d: fresh SEO always overrides any stale prerender detail file.
-RewriteRule ^(?:id|en)/(?:news|portfolio)/[^/]+/?$ _qwords.php [END]
-RewriteRule ^(?:api(?:/|$)|sitemap\.xml$|robots\.txt$|admin(?:/|$)) _qwords.php [END]
+# Reject direct requests for the entry and executable files outside the
+# approved legacy apps. /index.php is sent to the dispatcher for ?p=ID.
+RewriteCond %{REQUEST_URI} !^/(?:__QWORDS_LEGACY_APPS__(?!))(?:/|$)
+RewriteCond %{REQUEST_URI} !^/index\.php$
+RewriteCond %{REQUEST_URI} \.(?:php[0-9]*|phps|phtml|phar|cgi|pl|asp|aspx|shtml)(?:[./]|$) [NC,OR]
+RewriteCond %{REQUEST_FILENAME} \.(?:php[0-9]*|phps|phtml|phar|cgi|pl|asp|aspx|shtml)(?:[./]|$) [NC]
+RewriteRule ^ - [F,END]
 
-# A direct filename stays a file. Existing HTML directories still pass through
-# PHP so HTTPS/staging policy and audited legacy 301s cannot be bypassed.
+# Only built media/assets can bypass the dispatcher. Existing directories,
+# HTML and WordPress uploads never become public through a generic -f/-d.
 RewriteCond %{REQUEST_FILENAME} -f
-RewriteRule !\.html$ - [END]
-RewriteRule ^ _qwords.php [END]
+RewriteCond %{REQUEST_URI} ^/(?:(?:assets|installation-icons|news|portfolio|products|videos)/[^?]+|(?:hero-(?:640|960|1600)|installation-area-map|social-preview|video-cover|visitiga-media-logo))\.(?:js|css|woff2?|ttf|eot|png|jpe?g|gif|webp|avif|svg|ico|mp4|webm|pdf)$ [NC]
+RewriteRule ^ - [END]
+RewriteCond %{REQUEST_URI} !^/(?:__QWORDS_LEGACY_APPS__(?!))(?:/|$)
+RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/[A-Za-z0-9_-]+$
+RewriteRule ^ - [E=QWORDS_DISPATCH:1,E=Cache-Control:no-cache]
+RewriteCond %{ENV:QWORDS_DISPATCH} =1
+RewriteRule ^ /_qwords.php [END]
 
 <IfModule mod_headers.c>
   Header always set X-Content-Type-Options "nosniff"
@@ -30,10 +45,10 @@ RewriteRule ^ _qwords.php [END]
   Header always set Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
   Header always set Cross-Origin-Opener-Policy "same-origin"
   Header always set Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'sha256-tlYFKWndE3fLRZ6Ty6FS8nywM/Etixi2KS7iWbH2tpg='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.supabase.co; media-src 'self' blob: https://*.supabase.co; font-src 'self' data:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; worker-src 'self' blob:; frame-src 'self' https://www.google.com https://maps.google.com; form-action 'self'"
-  <FilesMatch "\.(?:js|css|woff2?|png|jpe?g|webp|avif|svg|ico|mp4|webm|pdf)$">
+  <FilesMatch "\.(?:js|css|woff2?|ttf|eot|png|jpe?g|webp|avif|svg|ico|mp4|webm|pdf)$">
     Header set Cache-Control "public, max-age=3600, must-revalidate"
   </FilesMatch>
-  <FilesMatch "-[A-Za-z0-9_-]{8,}\.(?:js|css|woff2?)$">
+  <FilesMatch "-[A-Za-z0-9_-]{8,}\.(?:js|css|woff2?|ttf|eot|webp)$">
     Header set Cache-Control "public, max-age=31536000, immutable"
   </FilesMatch>
   <FilesMatch "\.html$">
@@ -42,7 +57,4 @@ RewriteRule ^ _qwords.php [END]
 </IfModule>
 <IfModule mod_deflate.c>
   AddOutputFilterByType DEFLATE text/html text/plain text/css text/javascript application/javascript application/json application/xml image/svg+xml
-</IfModule>
-<IfModule LiteSpeed>
-  CacheLookup off
 </IfModule>

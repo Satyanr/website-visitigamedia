@@ -65,6 +65,26 @@ $check('CMS edits visible on next request', str_contains($call('/id/news/current
 $check('dynamic portfolio SEO', $call('/en/portfolio/current-project/')['status'] === 200 && str_contains($call('/en/portfolio/current-project/')['body'], 'CreativeWork'));
 $check('portfolio alias 301', ($call('/id/portfolio/old-project/')['headers']['Location'] ?? '') === '/id/portfolio/current-project/');
 $check('audited WordPress mapping 301', ($call('/audited-old/')['headers']['Location'] ?? '') === '/id/about/');
+$config['migration_routes'] = [
+    ['source' => '/?p=42', 'target' => '/id/about/', 'status' => 301, 'evidence' => 'test fixture', 'preserve_query' => ['utm_source']],
+    ['source' => '/index.php?page_id=23', 'target' => '/en/portfolio/old-project/', 'status' => 301, 'evidence' => 'test fixture'],
+    ['source' => '/2001/01/retired/', 'status' => 410, 'evidence' => 'test fixture'],
+];
+$check('exact WordPress query mapping and selected query values', ($call('/?p=42&utm_source=A%20B&token=ignored')['headers']['Location'] ?? '') === '/id/about/?utm_source=A%20B');
+$check('ambiguous WordPress IDs are not redirected', $call('/?p=42&p=41')['status'] === 404 && $call('/?p=42&page_id=23')['status'] === 404);
+$check('alias migration targets redirect straight to live content', ($call('/index.php?page_id=23')['headers']['Location'] ?? '') === '/en/portfolio/current-project/');
+$check('removed WordPress route returns 410 and noindex', $call('/2001/01/retired/')['status'] === 410 && $call('/2001/01/retired/')['headers']['X-Robots-Tag'] === 'noindex');
+$check('unmapped WordPress ID returns 404', $call('/index.php?p=999')['status'] === 404 && $call('/?p=999')['status'] === 404);
+$check('missing unlocalized dynamic detail is a real 404', $call('/news/missing/')['status'] === 404);
+$routes = $config['migration_routes'];
+$config['migration_routes'][] = ['source' => '/id/about/', 'target' => '/en/about/', 'status' => 301, 'evidence' => 'test fixture'];
+$check('canonical override and redirect chain are rejected', $call('/?p=42')['status'] === 503);
+$config['migration_routes'] = $routes;
+$config['migration_routes'][] = ['source' => '/beta/deep', 'target' => '/en/about/', 'status' => 301, 'evidence' => 'test fixture'];
+$build['legacy_apps'] = ['beta'];
+$check('migration mapping cannot shadow an independent legacy app', $call('/?p=42')['status'] === 503);
+$config['migration_routes'] = $routes;
+$build['legacy_apps'] = [];
 $check('legacy locale redirect', ($call('/news/current-news/')['headers']['Location'] ?? '') === '/en/news/current-news/');
 $check('missing content is 404', $call('/id/news/missing/')['status'] === 404 && $call('/en/portfolio/missing/')['status'] === 404);
 $check('invalid locale and slug are 404', $call('/fr/news/current-news/')['status'] === 404 && $call('/id/news/INVALID/')['status'] === 404);
