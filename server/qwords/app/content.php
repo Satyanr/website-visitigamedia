@@ -90,6 +90,57 @@ function validated_record(array $input, array $fields): array
     return $validated;
 }
 
+function article_https_url(string $value): ?array
+{
+    if (!safe_content_url($value) || !str_starts_with($value, 'https://')) return null;
+    $parts = parse_url($value);
+    if (!$parts || empty($parts['host']) || isset($parts['user']) || isset($parts['pass'])
+        || (isset($parts['port']) && $parts['port'] !== 443)) return null;
+    return $parts;
+}
+
+function article_embed_url(string $value): ?string
+{
+    $parts = article_https_url($value);
+    if (!$parts) return null;
+    $host = strtolower($parts['host']);
+    $path = $parts['path'] ?? '';
+    parse_str($parts['query'] ?? '', $query);
+    $youtube = in_array($host, ['youtube.com', 'www.youtube.com'], true);
+    $privateYoutube = in_array($host, ['youtube-nocookie.com', 'www.youtube-nocookie.com'], true);
+    if ($youtube || $privateYoutube || $host === 'youtu.be') {
+        $id = null;
+        if ($youtube && $path === '/watch') $id = $query['v'] ?? null;
+        elseif (preg_match(match (true) {
+            $host === 'youtu.be' => '~^/([^/]+)$~D',
+            $youtube => '~^/(?:embed|shorts)/([^/]+)$~D',
+            default => '~^/embed/([^/]+)$~D',
+        }, $path, $match)) $id = $match[1];
+        if (is_string($id) && preg_match('/^[A-Za-z0-9_-]{11}$/D', $id)) {
+            return 'https://www.' . ($privateYoutube ? 'youtube-nocookie.com' : 'youtube.com') . '/embed/' . $id;
+        }
+    }
+    if (in_array($host, ['vimeo.com', 'www.vimeo.com', 'player.vimeo.com'], true)
+        && preg_match($host === 'player.vimeo.com' ? '~^/video/(\d{1,12})$~D' : '~^/(\d{1,12})(?:/([a-f\d]{10}))?$~iD', $path, $match)) {
+        $hash = $match[2] ?? $query['h'] ?? null;
+        return 'https://player.vimeo.com/video/' . $match[1]
+            . (is_string($hash) && preg_match('/^[a-f\d]{10}$/iD', $hash) ? '?h=' . $hash : '');
+    }
+    return null;
+}
+
+function article_direct_video(string $path): bool
+{
+    if (preg_match('~^/videos/(?:[\w-]+/)*[\w.-]+\.(?:mp4|webm)$~iD', $path)) return true;
+    if (!str_starts_with($path, '/media/') || !preg_match('/\.(?:mp4|webm)$/D', $path)) return false;
+    try {
+        media_id(substr($path, strlen('/media/')));
+        return true;
+    } catch (ApiProblem) {
+        return false;
+    }
+}
+
 function sanitize_article(string $html): string
 {
     if (!str_contains($html, '<')) return $html;
@@ -102,8 +153,25 @@ function sanitize_article(string $html): string
     $allowed = ['p','br','span','div','strong','em','u','b','i','s','strike','sub','sup','h1','h2','h3','h4','h5','h6',
         'blockquote','ol','ul','li','a','img','hr','pre','code','table','tbody','thead','tfoot','tr','td','th','figure','figcaption'];
     foreach ($nodes as $node) {
+        if (in_array($node->tagName, ['iframe','video'], true)) {
+            $src = $node->getAttribute('src');
+            $attributes = [];
+            if ($node->tagName === 'iframe' && ($url = article_embed_url($src))) {
+                $attributes = ['src'=>$url, 'title'=>str_starts_with($url, 'https://player.vimeo.com/') ? 'Vimeo video' : 'YouTube video',
+                    'loading'=>'lazy', 'referrerpolicy'=>'strict-origin-when-cross-origin',
+                    'allow'=>'fullscreen; picture-in-picture; encrypted-media', 'allowfullscreen'=>''];
+            } elseif ($node->tagName === 'video' && article_direct_video($src)) {
+                $attributes = ['src'=>$src, 'controls'=>'', 'playsinline'=>'', 'preload'=>'metadata'];
+            }
+            if ($attributes) {
+                $media = $document->createElement($node->tagName);
+                foreach ($attributes as $name => $value) $media->setAttribute($name, $value);
+                $node->parentNode?->replaceChild($media, $node);
+            } else $node->parentNode?->removeChild($node);
+            continue;
+        }
         if (!in_array($node->tagName,$allowed,true)) {
-            if (!in_array($node->tagName,['script','style','template','iframe','object','svg','math'],true)) {
+            if (!in_array($node->tagName,['script','style','template','object','embed','svg','math'],true)) {
                 while ($node->firstChild) $node->parentNode?->insertBefore($node->firstChild,$node);
             }
             $node->parentNode?->removeChild($node);
@@ -115,7 +183,8 @@ function sanitize_article(string $html): string
             $keep = in_array($name,['alt','title'],true)
                 || (in_array($name,['width','height','colspan','rowspan'],true) && preg_match('/^\d{1,4}$/D',$value))
                 || ($node->tagName === 'a' && $name === 'href' && safe_content_url($value,true))
-                || ($node->tagName === 'img' && $name === 'src' && safe_content_url($value));
+                || ($node->tagName === 'img' && $name === 'src' && $value !== '' && safe_content_url($value)
+                    && (str_starts_with($value, '/') || article_https_url($value) !== null));
             if ($name === 'style') {
                 $styles = array_filter(array_map('trim', explode(';',$value)), static fn ($rule) =>
                     preg_match('/^(?:(?:text-align|font-weight|font-style):\s*[a-z0-9-]+|(?:font-size|width|max-width|height):\s*[.0-9]+(?:px|%|em|rem)|(?:color|background-color):\s*(?:#[0-9a-f]{3,8}|[a-z]+|rgba?\([0-9.,% ]+\)))$/iD',$rule));
@@ -123,6 +192,7 @@ function sanitize_article(string $html): string
             }
             if (!$keep) $node->removeAttributeNode($attribute);
         }
+        if ($node->tagName === 'img' && !$node->hasAttribute('src')) $node->parentNode?->removeChild($node);
     }
     $result = '';
     foreach ($body->childNodes as $node) $result .= $document->saveHTML($node);

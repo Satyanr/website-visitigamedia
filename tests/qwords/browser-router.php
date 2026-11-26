@@ -5,7 +5,11 @@ require dirname(__DIR__, 2) . '/server/qwords/runtime.php';
 $root = dirname(__DIR__, 2) . '/artifacts/qwords/public_html';
 $private = dirname($root) . '/qwords-private';
 $build = json_decode(file_get_contents($private . '/build.json'), true);
-if (!$build['staging'] || !$build['offline'] || ($build['backend'] ?? '') !== 'mysql') { http_response_code(503); exit('Testing artifact required'); }
+if (PHP_SAPI !== 'cli-server' || !$build['staging'] || ($build['backend'] ?? '') !== 'mysql'
+    || (!$build['offline'] && getenv('QWORDS_TEST_BROWSER_ORIGIN') !== $build['site_url'])) {
+    http_response_code(503);
+    exit('Testing artifact required');
+}
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 if (is_file($root . $path) && !str_ends_with($path, '.html') && !str_ends_with($path, '.php') && !str_starts_with($path, '/.')) return false;
 $config = ['site_url' => $build['site_url'], 'staging' => true, 'legacy_redirects' => []];

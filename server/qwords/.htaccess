@@ -4,6 +4,7 @@ Options -Indexes -MultiViews
 # the child without END or an internal redirect into the React application.
 RewriteEngine On
 RewriteOptions InheritDownBefore
+RewriteRule ^ - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 
 RewriteCond %{REQUEST_URI} ^/\.well-known(?:/|$)
 RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/[A-Za-z0-9_-]+$
@@ -42,7 +43,7 @@ RewriteRule ^ /_qwords.php [END]
   Header always set Referrer-Policy "strict-origin-when-cross-origin"
   Header always set Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
   Header always set Cross-Origin-Opener-Policy "same-origin"
-  Header always set Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'sha256-tlYFKWndE3fLRZ6Ty6FS8nywM/Etixi2KS7iWbH2tpg='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-src 'self' https://www.google.com https://maps.google.com; form-action 'self'"
+  Header always set Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'sha256-tlYFKWndE3fLRZ6Ty6FS8nywM/Etixi2KS7iWbH2tpg='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-src 'self' https://www.google.com https://maps.google.com https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com; form-action 'self'"
   <FilesMatch "\.(?:js|css|woff2?|ttf|eot|png|jpe?g|webp|avif|svg|ico|mp4|webm|pdf)$">
     Header set Cache-Control "public, max-age=3600, must-revalidate"
   </FilesMatch>

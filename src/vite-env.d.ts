@@ -7,6 +7,10 @@ interface JQuery<TElement = HTMLElement> {
   summernote(command: 'code'): string;
   summernote(command: 'code', value: string): JQuery<TElement>;
   summernote(command: 'destroy'): JQuery<TElement>;
+  summernote(command: 'editor.getLastRange'): { nativeRange(): Range };
+  summernote(command: 'editor.setLastRange'): void;
+  summernote(command: 'editor.insertNode', node: HTMLElement): void;
+  summernote(command: 'editor.pasteHTML', html: string): void;
 }
 
 interface Window {

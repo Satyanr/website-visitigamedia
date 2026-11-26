@@ -422,6 +422,22 @@ button, a { touch-action: manipulation; }
 button, input, textarea, select { font: inherit; }
 button:disabled { cursor: not-allowed; }
 img, video { max-width: 100%; }
+
+[data-article-media] iframe,
+.note-editable iframe {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  min-height: 200px;
+  border: 0;
+}
+
+[data-article-media] video,
+.note-editable video {
+  display: block;
+  width: 100%;
+  height: auto;
+}
 :where(a, button, input, textarea, select):focus-visible {
   outline: 2px solid var(--brand-orange-ink);
   outline-offset: 3px;

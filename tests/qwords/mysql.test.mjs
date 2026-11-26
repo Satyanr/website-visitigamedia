@@ -23,6 +23,7 @@ test('real MariaDB/MySQL HTTP integration', { skip: !enabled && process.env.QWOR
     await mkdir(join(publicRoot,'en/about'),{recursive:true});
     await writeFile(join(publicRoot,'en/about/index.html'),'<h1>About fixture</h1>');
     const fixture = JSON.parse(execFileSync(php,['tests/qwords/mysql-fixture.php',privateRoot],{encoding:'utf8'}));
+    assert.equal(fixture.heroPatchPassed, true, 'Manual patch changes only the verified hero image and is idempotent');
     processServer = spawn(php,['-S','127.0.0.1:4189','-t',publicRoot,'tests/qwords/mysql-router.php'],{
       env:{...process.env,QWORDS_TEST_PUBLIC_ROOT:publicRoot,QWORDS_TEST_PRIVATE_ROOT:privateRoot},stdio:'ignore',
     });
@@ -143,11 +144,44 @@ test('real MariaDB/MySQL HTTP integration', { skip: !enabled && process.env.QWOR
     assert.equal((await http('/media/'+media,{headers:{Range:'bytes=0-7'}})).status,206);
     const bad = new FormData(); bad.set('path',`news/${randomUUID()}.png`); bad.set('file',new Blob(['ordinary text'],{type:'image/png'}),'fake.png');
     assert.equal((await http('/api/admin/media',{admin:true,method:'POST',body:bad})).status,415);
-    assert.equal((await http('/api/admin/news'+byId,{admin:true,method:'PATCH',payload:{cover_image:'/media/'+media}})).status,200);
+    const secondMedia = `news/${randomUUID()}.png`;
+    file.set('path', secondMedia);
+    assert.equal((await http('/api/admin/media',{admin:true,method:'POST',body:file})).status,201);
+    const articleMedia = `<img src="/media/${media}"><img src="/media/${secondMedia}">
+      <img src="https://images.example.test/photo.webp">
+      <iframe src="https://youtu.be/M7lc1UVf-VE" srcdoc="unsafe" onload="unsafe()"></iframe>
+      <iframe src="https://www.youtube-nocookie.com/embed/M7lc1UVf-VE"></iframe>
+      <iframe src="https://vimeo.com/76979871/abcdef0123"></iframe>
+      <video src="/videos/service-showreel.webm" autoplay onerror="unsafe()"></video>
+      <iframe src="https://player.vimeo.com.evil.test/video/76979871"></iframe>
+      <iframe src="https://www.youtube.com/watch/extra?v=M7lc1UVf-VE"></iframe>
+      <img src="http://example.test/photo.webp"><img src="javascript:unsafe()"><img src="data:image/png;base64,AAAA">
+      <object data="https://example.test/"></object><script>unsafe()</script>`;
+    const withMedia = { content: '<p>Fixture news body</p>'+articleMedia,
+      content_id: {content:'<p>Artikel Indonesia</p>'+articleMedia}, content_en: {content:'<p>English article</p>'+articleMedia} };
+    const savedMedia = await http('/api/admin/news'+byId,{admin:true,method:'PATCH',payload:withMedia});
+    assert.equal(savedMedia.status,200);
+    const row = (await savedMedia.json()).rows[0];
+    for (const body of [row.content,row.content_id.content,row.content_en.content]) {
+      assert.ok(body.includes('/media/'+media));
+      assert.ok(body.includes('/media/'+secondMedia));
+      assert.match(body, /https:\/\/images\.example\.test\/photo\.webp/);
+      assert.match(body, /https:\/\/www\.youtube\.com\/embed\/M7lc1UVf-VE/);
+      assert.match(body, /https:\/\/www\.youtube-nocookie\.com\/embed\/M7lc1UVf-VE/);
+      assert.match(body, /https:\/\/player\.vimeo\.com\/video\/76979871\?h=abcdef0123/);
+      assert.match(body, /<video src="\/videos\/service-showreel\.webm" controls/);
+      assert.doesNotMatch(body,/unsafe|srcdoc|autoplay|base64|evil\.test|http:\/\/|<object|<script/);
+    }
+    const resave = await http('/api/admin/news'+byId,{admin:true,method:'PATCH',payload:{
+      content:row.content, content_id:row.content_id, content_en:row.content_en }});
+    assert.equal(resave.status,200);
+    assert.deepEqual((await resave.json()).rows[0].content_id, row.content_id);
+    assert.equal((await (await http('/api/content/news'+byId)).json()).rows[0].content_en.content,row.content_en.content);
     assert.equal((await http('/api/admin/media',{admin:true,method:'DELETE',payload:{paths:[media]}})).status,409);
     assert.equal((await http('/api/admin/news'+byId,{admin:true,method:'DELETE'})).status,200);
     assert.equal((await http('/en/news/'+slug+'/')).status,404);
     assert.equal((await http('/api/admin/media',{admin:true,method:'DELETE',payload:{paths:[media]}})).status,200);
+    assert.equal((await http('/api/admin/media',{admin:true,method:'DELETE',payload:{paths:[secondMedia]}})).status,200);
     const document = `documents/${randomUUID()}.png`;
     file.set('path',document); file.set('visibility','private');
     assert.equal((await http('/api/admin/media',{admin:true,method:'POST',body:file})).status,201);

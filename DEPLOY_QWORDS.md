@@ -34,6 +34,8 @@ GitHub Actions memakai dispatch staging/production, service MariaDB terisolasi, 
 
 ## Refresh dan perawatan
 
+Untuk pembaruan staging yang sudah berjalan, ikuti [prosedur incremental hero dan media artikel](docs/QWORDS_STAGING_MEDIA_UPDATE.md). Build untuk `https://staging.visitigamedia.com` menyertakan handler PHP 8.4 Qwords di `.htaccess`. Saat menyalin file melalui File Manager, simpan aturan hosting khusus domain yang ada dan pertahankan forwarding Authorization.
+
 Ekspor konten publik setelah batch update CMS, rebuild eksternal, bandingkan checksum HTML id/en dan promosikan artifact melalui prosedur manual. Runtime menyajikan detail/sitemap langsung dari DB. Snapshot listing dan halaman statis berubah saat artifact baru dipromosikan. Simpan data stabil di luar release. Jadwalkan private CLI `maintenance.php` melalui DirectAdmin Cron jika tersedia, misalnya sekali sehari dengan PHP absolut sesuai versi. Aplikasi juga membersihkan batch saat observability dibuka oleh admin. Set rotasi log di panel dan periksa kuota. Playwright/Node tidak berjalan pada hosting.
 
 [Rujukan Qwords DirectAdmin](https://kb.qwords.com/category/directadmin/tutorial-awal-menggunakan-hosting-dengan-panel-direct-admin/) · [PDO MySQL](https://www.php.net/manual/en/ref.pdo-mysql.php) · [Transaksi InnoDB](https://mariadb.com/docs/server/reference/sql-statements/data-manipulation/selecting-data/for-update).

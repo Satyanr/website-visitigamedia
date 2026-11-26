@@ -8,7 +8,7 @@ import { useMotionPolicy } from '@/hooks/useMotionPolicy';
 
 const AUTOPLAY_MS = 6000;
 function normalizeSlides(content: HomepageContent): HomepageHeroSlide[] {
-  return content.hero_slides?.filter((slide) => Boolean(slide?.image_url?.trim())) ?? [];
+  return content.hero_slides?.filter(Boolean) ?? [];
 }
 
 const fallbackCopies = {
@@ -83,7 +83,7 @@ export default function HeroSection({ content }: { content: HomepageContent }) {
         {slides.map((slide, index) => {
           const isActive = index === activeIndex;
           return <motion.div key={`${slide.image_url}-${index}`} className="hero-carousel__slide absolute inset-0" initial={false} animate={{ opacity: isActive ? 1 : 0, scale: isActive ? 1 : 1.02, x: isActive ? 0 : 8 }} transition={{ duration: reducedMotion ? 0 : .85, ease: [0.22, 1, 0.36, 1] }} aria-hidden={!isActive}>
-            <img src={slide.image_url} alt={slide.alt ?? ''} width="1600" height="900" fetchPriority={index === 0 ? 'high' : 'auto'} decoding="async" />
+            {slide.image_url?.trim() && <img src={slide.image_url} alt={slide.alt ?? ''} width="1600" height="900" fetchPriority={index === 0 ? 'high' : 'auto'} decoding="async" />}
           </motion.div>;
         })}
       </div>
@@ -103,7 +103,7 @@ export default function HeroSection({ content }: { content: HomepageContent }) {
 
         <div className="hero-carousel__controls" aria-label={lang === 'id' ? 'Kontrol slideshow' : 'Slideshow controls'}>
           <div className="hero-carousel__pagination" role="tablist" aria-label={lang === 'id' ? 'Pilih slide' : 'Choose slide'}>
-            {slides.map((slide, index) => <button key={`${slide.image_url}-dot`} type="button" role="tab" aria-selected={index === activeIndex} aria-label={`${lang === 'id' ? 'Slide' : 'Slide'} ${index + 1}`} className={index === activeIndex ? 'is-active' : ''} onClick={() => goTo(index)}><span /></button>)}
+            {slides.map((slide, index) => <button key={`${index}-${slide.image_url}`} type="button" role="tab" aria-selected={index === activeIndex} aria-label={`Slide ${index + 1}`} className={index === activeIndex ? 'is-active' : ''} onClick={() => goTo(index)}><span /></button>)}
           </div>
         </div>
       </div>

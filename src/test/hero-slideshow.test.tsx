@@ -51,12 +51,14 @@ describe('hero slideshow', () => {
 
   it('does not render legacy images when the configured slideshow is empty or incomplete', () => {
     renderHeroWithSlides(defaultHomepageContent.hero_slides.map((slide, index) => ({ ...slide, image_url: index === 3 ? '/test-slide-4.jpg' : '' })));
-    expect(screen.getAllByRole('tab')).toHaveLength(1);
+    expect(screen.getAllByRole('tab')).toHaveLength(6);
     expect(document.querySelectorAll('.hero-carousel__slide img')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('tab', { name: 'Slide 4' }));
+    expect(screen.getByRole('heading', { name: 'VIDEOTRON RENTAL' })).toBeInTheDocument();
 
     cleanup();
     renderHeroWithSlides(defaultHomepageContent.hero_slides.map((slide) => ({ ...slide, image_url: '' })));
-    expect(screen.queryAllByRole('tab')).toHaveLength(0);
+    expect(screen.getAllByRole('tab')).toHaveLength(6);
     expect(document.querySelectorAll('.hero-carousel__slide img')).toHaveLength(0);
     expect(screen.getByRole('heading', { name: 'ADVERTISING' })).toBeInTheDocument();
   });

@@ -24,6 +24,12 @@ test('CSP hashes emitted executable scripts and excludes data/external scripts',
   const rules = renderHtaccess(template, hashes, { staging: true });
   assert.match(rules, /connect-src 'self';/);
   assert.doesNotMatch(rules, /supabase\.co/);
+  assert.match(rules, /img-src 'self' data: blob: https:;/);
+  assert.match(rules, /frame-src [^;]+ https:\/\/www\.youtube\.com https:\/\/www\.youtube-nocookie\.com https:\/\/player\.vimeo\.com;/);
+  assert.match(rules, /E=HTTP_AUTHORIZATION:%\{HTTP:Authorization\}/);
+  assert.doesNotMatch(rules, /application\/x-httpd-php84/);
+  assert.match(renderHtaccess(template, hashes, { staging: true, site_url: 'https://staging.visitigamedia.com' }),
+    /<FilesMatch "\\\.\(php\|phtml\|php3\|php4\|php5\)\$">\n  SetHandler application\/x-httpd-php84\n<\/FilesMatch>/);
 });
 const php = process.env.PHP_BINARY || 'php';
 const available = spawnSync(php, ['-v']).status === 0;

@@ -1,5 +1,7 @@
 import { api } from '@/lib/api';
-import { localize } from '@/lib/translation';
+import { localize, translateContent } from '@/lib/translation';
+import { normalizeArticleHeadings } from '@/lib/articleSeo';
+import { appendMissingArticleMedia, sanitizeArticleHtml, translateArticleMedia } from '@/lib/articleMedia';
 import type { AboutContent, AboutContentInput, AdminNotificationCounts, CareerJob, CareerJobInput, CareersPageContent, CareersPageContentInput, CareerSubmission, CareerSubmissionStatus, ContactLead, ContactSettings, ContactSettingsInput, HomepageContent, HomepageContentInput, LeadStatus, NewsInput, NewsRecord, Portfolio, PortfolioInput, PortfolioSlugAlias, Product, ProductCatalogue, ProductInput, ServiceContent, ServiceContentInput, ServiceLandingContent, ServiceLandingInput, ServiceLandingSlug } from '@/types/admin';
 
 function client() {
@@ -111,20 +113,38 @@ export async function getPublicNews(slug: string): Promise<NewsRecord | null> {
   return data as unknown as NewsRecord | null;
 }
 
-export async function saveNews(input: NewsInput, id?: string, previous?: NewsRecord["content_id"], form?: FormData): Promise<void> {
+export async function saveNews(input: NewsInput, article?: NewsRecord | null, form?: FormData) {
   assertSafeMediaUrl(input.cover_image, 'URL cover berita');
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(input.slug) || input.slug.length > 100) throw new Error('Slug hanya boleh berisi huruf kecil, angka, dan tanda hubung (maksimal 100 karakter).');
   if ((input.seo_title?.length ?? 0) > 70) throw new Error('SEO title maksimal 70 karakter.');
   if ((input.seo_description?.length ?? 0) > 180) throw new Error('Meta description maksimal 180 karakter.');
   if ((input.cover_alt?.length ?? 0) > 180) throw new Error('Alt text cover maksimal 180 karakter.');
   if ((input.target_keyword?.length ?? 0) > 100) throw new Error('Target keyword maksimal 100 karakter.');
-  const contentEn = { title: input.title, content: input.content, author: input.author, category: input.category, excerpt: input.excerpt, seo_title: input.seo_title ?? '', seo_description: input.seo_description ?? '', cover_alt: input.cover_alt ?? '', target_keyword: input.target_keyword ?? '' };
-  const contentId = await localize(contentEn, previous, form);
-  const payload = { ...input, content_en: contentEn, content_id: contentId };
-  const query = id ? client().from('news').update(payload).eq('id', id) : client().from('news').insert(payload);
+  const content = normalizeArticleHeadings(sanitizeArticleHtml(input.content));
+  if (!content.trim() || content === '<p><br></p>') throw new Error('Isi artikel tidak boleh kosong.');
+  const contentEn = { title: input.title, content, author: input.author, category: input.category, excerpt: input.excerpt, seo_title: input.seo_title ?? '', seo_description: input.seo_description ?? '', cover_alt: input.cover_alt ?? '', target_keyword: input.target_keyword ?? '' };
+  let contentId;
+  if (form?.get('auto_locale_id') === 'on') {
+    let translated = contentEn;
+    const body = await translateArticleMedia(content, async (masked) => {
+      translated = await translateContent({ ...contentEn, content: masked });
+      return translated.content;
+    });
+    contentId = { ...translated, content: body };
+  } else {
+    const localized = await localize(contentEn, article?.content_id, form);
+    const body = normalizeArticleHeadings(sanitizeArticleHtml(localized.content || content));
+    const previousSource = article && (article.content_en?.content || article.content);
+    // A locale that still mirrors the old source should follow edits or removal in the new source.
+    const mirrored = previousSource && body === normalizeArticleHeadings(sanitizeArticleHtml(previousSource));
+    contentId = { ...localized, content: mirrored ? content : appendMissingArticleMedia(body, content) };
+  }
+  const payload = { ...input, content, content_en: contentEn, content_id: contentId };
+  const query = article ? client().from('news').update(payload).eq('id', article.id) : client().from('news').insert(payload);
   const { error } = await query;
   if (error?.code === '23505') throw new Error('Slug sudah digunakan oleh berita lain. Pilih slug yang berbeda.');
   if (error) throw error;
+  return payload;
 }
 
 export async function deleteNews(id: string): Promise<void> {

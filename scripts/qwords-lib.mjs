@@ -29,7 +29,9 @@ export function renderHtaccess(template, hashes, build) {
   return template.replaceAll('__QWORDS_LEGACY_APPS__(?!)', apps)
     .replace(/script-src 'self'[^;]*;/, `script-src 'self' ${hashes.join(' ')};`)
     .replace(/^([ \t]+Header (?:always )?set .+)$/gm, `$1 ${scope}`)
-    + (build.staging ? '\n<IfModule mod_headers.c>\n  Header always set X-Robots-Tag "noindex, nofollow"\n</IfModule>\n' : '');
+    + (build.staging ? '\n<IfModule mod_headers.c>\n  Header always set X-Robots-Tag "noindex, nofollow"\n</IfModule>\n' : '')
+    + (build.staging && build.site_url === 'https://staging.visitigamedia.com'
+      ? '\n<FilesMatch "\\.(php|phtml|php3|php4|php5)$">\n  SetHandler application/x-httpd-php84\n</FilesMatch>\n' : '');
 }
 
 export function assertNoSecrets(text, secrets = []) {

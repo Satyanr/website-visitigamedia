@@ -1,5 +1,6 @@
 import { LocalizedEditor } from '@/components/admin/LocalizedEditor';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { api } from '@/lib/api';
 import { saveNews } from '@/lib/adminApi';
 import { ContentModal, InputField } from '@/components/admin/ContentModal';
 import { ImageUploadField } from '@/components/admin/ImageUploadField';
@@ -7,38 +8,63 @@ import { RichTextEditor } from '@/components/admin/RichTextEditor';
 import { AdminAlert } from '@/components/admin/AdminUi';
 import { NEWS_SLUG_PATTERN, slugifyNewsTitle } from '@/lib/newsSlug';
 import type { NewsRecord } from '@/types/admin';
-import { normalizeArticleHeadings } from '@/lib/articleSeo';
 
 export function NewsEditor({ article, onClose, onSaved }: { article: NewsRecord | null; onClose: () => void; onSaved: () => Promise<void> }) {
   const [title, setTitle] = useState(article?.title ?? '');
   const [slug, setSlug] = useState(article?.slug ?? '');
   const [slugEdited, setSlugEdited] = useState(Boolean(article));
   const [error, setError] = useState('');
+  const [mediaPending, setMediaPending] = useState(false);
+  const submitting = useRef(false);
+  const pending = useRef({ cover: false, body: false });
+  const uploadedPaths = useRef(new Set<string>());
+  useEffect(() => {
+    const paths = uploadedPaths.current;
+    return () => {
+      // Remove only files created by this editor. The API checks CMS references under its media lock.
+      for (const path of paths) void api.media.remove([path]);
+      paths.clear();
+    };
+  }, []);
+  const updatePending = (field: 'cover' | 'body', value: boolean) => {
+    if (value && submitting.current) return false;
+    pending.current[field] = value;
+    setMediaPending(pending.current.cover || pending.current.body);
+  };
 
   const submit = async (form: FormData) => {
+    submitting.current = true;
     try {
+      if (pending.current.cover || pending.current.body) throw new Error('Tunggu hingga unggahan media selesai.');
+      setError('');
       const coverImage = String(form.get('cover_image')).trim();
       const content = String(form.get('content')).trim();
       const date = String(form.get('published_at'));
       if (!NEWS_SLUG_PATTERN.test(slug) || slug.length > 100) throw new Error('Slug hanya boleh berisi huruf kecil, angka, dan tanda hubung (maksimal 100 karakter).');
       if (!coverImage) throw new Error('Silakan unggah cover berita terlebih dahulu.');
       if (!content || content === '<p><br></p>') throw new Error('Isi artikel tidak boleh kosong.');
-      await saveNews({
+      const saved = await saveNews({
         title: title.trim(), slug, author: String(form.get('author')).trim(),
         category: String(form.get('category')).trim(), cover_image: coverImage,
-        excerpt: String(form.get('excerpt')).trim(), content: normalizeArticleHeadings(content),
+        excerpt: String(form.get('excerpt')).trim(), content,
         seo_title: String(form.get('seo_title')).trim(), seo_description: String(form.get('seo_description')).trim(),
         cover_alt: String(form.get('cover_alt')).trim(), target_keyword: String(form.get('target_keyword')).trim(),
         published_at: date ? new Date(`${date}T00:00:00`).toISOString() : null,
-      }, article?.id, article?.content_id, form);
+      }, article, form);
+      for (const path of uploadedPaths.current) {
+        const url = api.media.getPublicUrl(path).data.publicUrl;
+        if (saved.content.includes(url) || saved.content_id.content.includes(url) || saved.cover_image === url) uploadedPaths.current.delete(path);
+      }
       await onSaved();
       onClose();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Berita tidak dapat disimpan.');
+    } finally {
+      submitting.current = false;
     }
   };
 
-  return <ContentModal title={article ? 'Edit berita' : 'Tambah berita'} onClose={onClose} onSubmit={submit}>
+  return <ContentModal title={article ? 'Edit berita' : 'Tambah berita'} onClose={onClose} onSubmit={submit} submitDisabled={mediaPending}>
     {error && <div className="sm:col-span-2"><AdminAlert>{error}</AdminAlert></div>}
     <label className="text-sm font-medium sm:col-span-2">Judul artikel
       <input name="title" required maxLength={200} value={title} onChange={(event) => {
@@ -56,7 +82,7 @@ export function NewsEditor({ article, onClose, onSaved }: { article: NewsRecord 
     <InputField label="Penulis" name="author" initial={article?.author} />
     <InputField label="Kategori" name="category" initial={article?.category} />
     <InputField label="Tanggal publikasi" name="published_at" type="date" required={false} initial={article?.published_at?.slice(0, 10)} />
-    <ImageUploadField label="Cover berita" name="cover_image" initial={article?.cover_image} folder="news" />
+    <ImageUploadField label="Cover berita" name="cover_image" initial={article?.cover_image} folder="news" onUploadState={(value) => updatePending('cover', value)} onUploaded={(path) => uploadedPaths.current.add(path)} />
     <label className="text-sm font-medium sm:col-span-2">Ringkasan
       <textarea name="excerpt" required defaultValue={article?.excerpt ?? ''} rows={3} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2 outline-none focus:border-orange-500" />
     </label>
@@ -69,6 +95,6 @@ export function NewsEditor({ article, onClose, onSaved }: { article: NewsRecord 
         <label className="text-sm font-medium sm:col-span-2">Alt text cover (opsional)<input name="cover_alt" maxLength={180} defaultValue={article?.cover_alt ?? ''} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2 outline-none focus:border-orange-500" /></label>
       </div>
     </details>
-    <RichTextEditor name="content" initial={article?.content} />
+    <RichTextEditor name="content" initial={article?.content_en?.content || article?.content} onUploadState={(value) => updatePending('body', value)} onUploaded={(path) => uploadedPaths.current.add(path)} />
   <LocalizedEditor value={article?.content_id} /></ContentModal>;
 }

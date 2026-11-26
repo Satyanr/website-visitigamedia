@@ -6,7 +6,7 @@ export default defineConfig({
   workers: 1,
   timeout: 60_000,
   reporter: 'list',
-  use: { baseURL: 'https://qwords-stage.example.test', trace: 'retain-on-failure', ...devices['Desktop Chrome'] },
+  use: { baseURL: process.env.QWORDS_TEST_BROWSER_ORIGIN || 'https://qwords-stage.example.test', trace: 'retain-on-failure', ...devices['Desktop Chrome'] },
   webServer: {
     command: 'php -S 127.0.0.1:4186 -t artifacts/qwords/public_html tests/qwords/browser-router.php',
     url: 'http://127.0.0.1:4186/id/',
